@@ -48,7 +48,9 @@ operators' whole working surface.
 4. **E-stop** for any operator on any truck, always reachable. **Remote driving** by keyboard, with
    input lag and deadman state on screen.
 5. **Battery warnings:** drain against the fleet, and whether the truck can reach the bay.
-6. **Two or more named operators** with roles, an audit log of every command, and recovery from
+6. **Alerting that earns its sound:** interrupt only for action needed in the next minute; everything
+   else visible but silent, with the rule that silenced it inspectable.
+7. **Two or more named operators** with roles, an audit log of every command, and recovery from
    link drops on its own. Starts with `docker compose up` on port 8090; port 8080 is taken.
 
 **Isn't:** no model on the control path, and no plain-language queries in this version. No
@@ -76,8 +78,27 @@ tasks. Each task has a written spec, tests written before code, the fixtures in
    unattended run against the live gateway.
 
 Steps 1 and 2 run in parallel in separate worktrees. The UI starts once the state model is
-fixed. Stack: TypeScript on Node 22 as a single process, SQLite through the built-in
+fixed. Stack: TypeScript on Node 24 as a single process, SQLite through the built-in
 `node:sqlite` (no native build on ARM), and a plain browser UI. This fits one OCPU.
+
+## How it's tested
+
+Against how it will be judged: unattended on an unseen site, and driven
+by a novice. Time is injected, so blast scenarios run in milliseconds.
+Pure logic is table-tested per fault class; the nine research/fixtures/
+are replayed as regressions. Blast safety is property-tested over seeded
+random days from a fake gateway that knows true positions — 200 seeds in
+CI, the full set before submission, every failing seed kept. Two rules:
+a can't-clear alarm within 10 s of the data allowing it, and never
+"clear" while the system believes a truck might be inside. Both are
+checked against the truth for every fault it can detect; for the one it
+can't, violations are measured and reported as the limit of
+enforcement. Unnecessary holds are counted. The fake gateway must
+reproduce the live fixtures and probe before its results count, and
+unverified behaviour is tested both ways. Process kills, browser drops,
+stuck keys, slow reads and a reboot are tested on purpose. A live soak
+runs beside a monitor whose code shares nothing with ours. One person
+who has never seen it does three timed tasks. Detail in TESTING.md.
 
 ## What changed
 
