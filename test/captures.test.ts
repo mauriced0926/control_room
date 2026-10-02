@@ -7,7 +7,10 @@
 //
 // The oracle is computed straight from the raw records, sharing no code with the product:
 //   genuinely silent: a gap of more than ORACLE_GAP_MS between a truck's messages while heartbeats
-//     show the link up;
+//     show the link up. Outages are cut out of each gap and the link-up pieces judged on their own:
+//     a truck that stays quiet after the link returns is silent, even though its gap began in the
+//     outage. A piece shorter than ORACLE_GAP_MS right after an outage may be flagged but need not be,
+//     since by then the truck has been quiet since before the outage;
 //   genuinely frozen: the same segment and offset for at least ORACLE_GAP_MS while reporting
 //     TRAMMING or MANUAL at 0.5 m/s or more.
 // Thresholds well apart from the product's (5 s silent, 3 s frozen) mean any truck flagged in the
@@ -47,6 +50,13 @@ function oracle(records: FixtureRecord[]) {
     if (tEnd - beats.at(-1)! > PARAMS.linkDownAfter.value) outages.push([beats.at(-1)!, Infinity]);
   }
   const inOutage = (a: number, b: number) => outages.some(([s, e]) => a < e && b > s);
+  // The parts of (a, b) outside every outage.
+  const linkUpPieces = (a: number, b: number): Array<[number, number]> => {
+    let pieces: Array<[number, number]> = [[a, b]];
+    for (const [s, e] of outages) pieces = pieces.flatMap(([x, y]): Array<[number, number]> =>
+      y <= s || x >= e ? [[x, y]] : [...(x < s ? [[x, s] as [number, number]] : []), ...(y > e ? [[e, y] as [number, number]] : [])]);
+    return pieces;
+  };
 
   const byTruck = new Map<string, Array<{ rx: number; m: Tm }>>();
   for (const r of recs) {
@@ -55,14 +65,20 @@ function oracle(records: FixtureRecord[]) {
     list.push({ rx: r.rx_ms!, m: r.m as unknown as Tm });
     byTruck.set(r.m.vehicle_id, list);
   }
-  const silent: Episode[] = [], frozen: Episode[] = [];
+  const silent: Episode[] = [], tolerated: Episode[] = [], frozen: Episode[] = [];
+  const judgeGap = (truck: string, a: number, b: number) => {
+    for (const [x, y] of linkUpPieces(a, b)) {
+      if (y - x > ORACLE_GAP_MS) silent.push({ truck, start: x, end: y });
+      else if (x > a) tolerated.push({ truck, start: x, end: y });
+    }
+  };
   for (const [truck, msgs] of byTruck) {
     for (let i = 1; i < msgs.length; i++) {
       const a = msgs[i - 1]!.rx, b = msgs[i]!.rx;
-      if (b - a > ORACLE_GAP_MS && !inOutage(a, b)) silent.push({ truck, start: a, end: b });
+      if (b - a > PARAMS.truckSilentAfter.value) judgeGap(truck, a, b);
     }
     const last = msgs.at(-1)!.rx;
-    if (tEnd - last > ORACLE_GAP_MS && !inOutage(last, tEnd)) silent.push({ truck, start: last, end: tEnd });
+    if (tEnd - last > PARAMS.truckSilentAfter.value) judgeGap(truck, last, tEnd);
     // Frozen: walk messages that advance seq (a duplicate or a late one says nothing new).
     let maxSeq = -Infinity, run: { start: number; end: number; key: string } | null = null;
     const close = () => { if (run && run.end - run.start >= ORACLE_GAP_MS) frozen.push({ truck, start: run.start, end: run.end }); run = null; };
@@ -78,7 +94,7 @@ function oracle(records: FixtureRecord[]) {
     }
     close();
   }
-  return { recs, outages, inOutage, silent, frozen, t0 };
+  return { recs, outages, inOutage, silent, tolerated, frozen, t0 };
 }
 
 function checkCapture(records: FixtureRecord[]): Result {
@@ -104,7 +120,7 @@ function checkCapture(records: FixtureRecord[]): Result {
           flaggedSilent.add(t.vehicleId);
           const ep = o.silent.find((e) => e.truck === t.vehicleId && now >= e.start && now <= e.end + SAMPLE_MS);
           if (ep) hitSilent.add(ep);
-          else problems.push(`${t.vehicleId} flagged silent at ${s(now)} (${t.confidenceReason}) with no genuine silence`);
+          else if (!o.tolerated.some((e) => e.truck === t.vehicleId && now >= e.start && now <= e.end + SAMPLE_MS)) problems.push(`${t.vehicleId} flagged silent at ${s(now)} (${t.confidenceReason}) with no genuine silence`);
         }
         if (t.confidence === 'contradicted') {
           flaggedFrozen.add(t.vehicleId);
