@@ -29,6 +29,10 @@ test('L2.10 a pack draining smoothly through 1 % to 0 is not fractional (weak-pa
   assert.equal(t.socPct?.value, 0);
   assert.equal(t.socFractional, false);
   assert.equal(t.dataQuality['soc_pct:fractional'], undefined);
+  // A first report of exactly 0 is empty whichever way it is read.
+  const z = rig();
+  z.send({ seq: 1, soc_pct: 0 });
+  assert.equal(z.truck().socFractional, false);
 });
 
 test('L2.10 a jump from a percentage straight into 0-1 is a fraction', () => {

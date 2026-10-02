@@ -424,9 +424,10 @@ export class FleetState {
     this.#trackDrain(t, at);
   }
 
-  // A value in 0..1 is a fraction unless the pack has been draining smoothly down into it.
+  // A value in 0..1 is a fraction unless the pack has been draining smoothly down into it. Zero
+  // reads the same either way.
   #isFractional(t: Truck, soc: number): boolean {
-    if (soc > 1) return false;
+    if (soc > 1 || soc === 0) return false;
     const prev = t.soc?.value;
     if (prev === undefined || t.socFractional) return true;
     return prev - soc > PARAMS.fractionalSocJump.value;
