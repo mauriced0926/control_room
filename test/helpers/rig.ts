@@ -48,8 +48,8 @@ export function rig(hello: Hello | null = helloAt(T0)): Rig {
 
 // Replays fixture records in arrival order: the clock is set to each record's rx_ms, messages are
 // fed as the lines they arrived as, unparseable lines as their raw text. `onRecord` runs after each.
-// Records are sorted by rx_ms (stably) first: research/trim.py writes a multi-part fixture part by
-// part, so weak-pack.jsonl holds HT-06's records and then the fleet's, from 535 s earlier.
+// Records are sorted by rx_ms (stably) first, as a guard: research/trim.py once wrote multi-part
+// fixtures part by part, out of arrival order. It now sorts them.
 export function replay(records: FixtureRecord[], opts: { hello?: boolean; onRecord?: (r: FixtureRecord, f: FleetState, c: ManualClock) => void } = {}) {
   const body = records.filter((r) => r.kind !== 'fixture' && typeof r.rx_ms === 'number').sort((a, b) => a.rx_ms! - b.rx_ms!);
   const start = body[0]!.rx_ms!;

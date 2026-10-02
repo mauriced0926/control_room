@@ -71,7 +71,8 @@ cases = [
 
 os.makedirs(outdir, exist_ok=True)
 for name, source, what, parts in cases:
-    lines = [r for rows, a, b, keep in parts for r in select(rows, a, b, keep)]
+    # A fixture cut in several parts is written in arrival order, as a replay expects.
+    lines = sorted((r for rows, a, b, keep in parts for r in select(rows, a, b, keep)), key=lambda r: r['rx_ms'])
     with open(os.path.join(outdir, name + '.jsonl'), 'w') as f:
         f.write(json.dumps({'kind': 'fixture', 'case': name, 'source': source, 'shows': what}) + '\n')
         for r in lines: f.write(json.dumps(r) + '\n')

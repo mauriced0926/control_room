@@ -137,9 +137,8 @@ test('L2.28 a truck about to charge is not warned about the lap it will not driv
 
 test('L2.27 / L3.10 weak-pack: HT-06 flagged in its first minute, warned while it could still get home, then needs a tow', () => {
   const recs = fixture('weak-pack');
-  // The file is stored in two blocks (see replay()); replay puts it back in arrival order.
   const rx = recs.filter((r) => r.rx_ms !== undefined).map((r) => r.rx_ms!);
-  assert.ok(rx.some((t, i) => i > 0 && t < rx[i - 1]!), 'weak-pack.jsonl is not in arrival order on disk');
+  assert.ok(rx.every((t, i) => i === 0 || t >= rx[i - 1]!), 'weak-pack.jsonl is in arrival order on disk');
   let flaggedAt: number | null = null;
   let firstWarning: { at: number; warning: string; soc: number; toBayNeed: number } | null = null;
   const othersFlagged = new Set<string>();
