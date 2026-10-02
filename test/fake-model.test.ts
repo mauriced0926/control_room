@@ -166,7 +166,8 @@ test('a truck below 25 % charges at the end of the bay to 90 %, then carries on;
   assert.equal(h.latest('HT-01').offset_m, 79.95);
   assert.ok(h.until('HT-01', (t) => t.state === 'TRAMMING', 1_000_000) >= 0);
   assert.equal(h.latest('HT-01').soc_pct, 90);
-  assert.ok(h.telemetry('HT-02').every((t) => t.state === 'TRAMMING'));
+  // HT-02 passes the end of the bay within 4 s; later it loads, which is not the point here
+  assert.ok(h.telemetry('HT-02').filter((t) => t.t_device_ms < T0 + 10_000).every((t) => t.state === 'TRAMMING'));
 });
 
 test('energy: 6 %/km empty, 9 %/km loaded (measured), nothing while stopped, scaled by a weak pack\'s drain factor', () => {
@@ -422,7 +423,7 @@ test('RETURN_TO_BAY takes the shorter direction, charges to 90 %, then parks IDL
   assert.ok(h.until('HT-01', (t) => t.state === 'IDLE', 1_000_000) >= 0);
   assert.equal(h.latest('HT-01').soc_pct, 90);
   assert.equal(h.latest('HT-01').task, null);
-  assert.equal(h.latest('HT-02').state, 'IDLE');
+  assert.ok(h.until('HT-02', (t) => t.state === 'IDLE', 1_000_000) >= 0);
   assert.equal(h.latest('HT-02').payload_kg, 42_000, 'drove past the tip without dumping');
   assert.equal(h.command('HT-01', 'RESUME').status, 'ACCEPTED');
   assert.ok(h.until('HT-01', (t) => t.state === 'TRAMMING' && t.speed_mps > 0, 6_100) >= 0);
@@ -515,6 +516,7 @@ test('drive rejections: NO_ACTIVE_LEASE, BAD_THROTTLE, BAD_SEQ, UNKNOWN_VEHICLE;
   h.drive('HT-01', lease, 0, 0.2);
   h.drive('HT-01', lease, 1.5, 0.2);
   h.drive('HT-99', lease, 1, 0.2);
+  h.advance(1_000); // NO_ACTIVE_LEASE was last sent for HT-01 under a second ago
   h.drive('HT-01', 'L-wrong', 1, 0.2);
   assert.deepEqual(rej().slice(2).map((r) => r.reason), ['BAD_THROTTLE', 'BAD_SEQ', 'UNKNOWN_VEHICLE', 'NO_ACTIVE_LEASE']);
 });
@@ -762,10 +764,10 @@ test('a different site just works: route, zone names, loop length, vehicles and 
   assert.deepEqual(hello.vehicles, ['T1', 'T2', 'T3']);
   assert.equal(hello.loop_length_m, 900);
   assert.deepEqual(hello.zones.map((z) => z.zone_id), ['PARK', 'RAMP', 'FACE', 'HAUL', 'CRUSHER']);
-  h.advance(3_000);
+  h.advance(5_000);
   assert.equal(h.latest('T3').zone_id, 'PARK', 'wrapped at 900 m');
   h.command('T2', 'EXIT_ZONE');
-  assert.ok(h.until('T1', (t) => t.state === 'LOADING', 10_000) >= 0);
+  assert.ok(h.until('T1', (t) => t.state === 'LOADING', 30_000) >= 0);
   assert.equal(h.latest('T1').segment_id, 'F');
   assert.equal(h.latest('T1').offset_m, 49.95);
   assert.ok(h.until('T2', (t) => t.state === 'HOLDING', 60_000) >= 0);

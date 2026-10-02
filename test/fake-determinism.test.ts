@@ -71,5 +71,6 @@ test('L0.C4 a different seed gives a different day', () => {
 test('a 15-minute day runs in well under a second of real time', () => {
   runDay(1); // warm up the JIT
   const { realMs } = runDay(2);
+  console.log(`15-minute day: ${realMs.toFixed(0)} ms`);
   assert.ok(realMs < 1_000, `took ${realMs.toFixed(0)} ms`);
 });
