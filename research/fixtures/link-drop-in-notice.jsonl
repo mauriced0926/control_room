@@ -1,0 +1,17 @@
+{"kind": "fixture", "case": "link-drop-in-notice", "source": "run2", "shows": "DRAW_12 goes CLOSING; 1 s later the link drops for 45 s (logins accepted then closed); the hello on reconnect still shows DRAW_12 CLOSING with its effective time."}
+{"m": {"type": "heartbeat", "server_time_ms": 1790907066014}, "kind": "msg", "rx_ms": 1790907066116}
+{"m": {"type": "zone_event", "zone_id": "DRAW_12", "status": "CLOSING", "reason": "BLAST_WINDOW", "effective_at_ms": 1790907186728, "server_time_ms": 1790907066728}, "kind": "msg", "rx_ms": 1790907066892}
+{"m": {"type": "heartbeat", "server_time_ms": 1790907068023}, "kind": "msg", "rx_ms": 1790907068101}
+{"kind": "closed_by_peer", "rx_ms": 1790907068736}
+{"attempt": 2, "kind": "connected", "rx_ms": 1790907070833}
+{"kind": "closed_by_peer", "rx_ms": 1790907070885}
+{"attempt": 3, "kind": "connected", "rx_ms": 1790907074953}
+{"kind": "closed_by_peer", "rx_ms": 1790907075009}
+{"attempt": 4, "kind": "connected", "rx_ms": 1790907083086}
+{"kind": "closed_by_peer", "rx_ms": 1790907083134}
+{"attempt": 5, "kind": "connected", "rx_ms": 1790907093208}
+{"kind": "closed_by_peer", "rx_ms": 1790907093254}
+{"attempt": 6, "kind": "connected", "rx_ms": 1790907103323}
+{"kind": "closed_by_peer", "rx_ms": 1790907103371}
+{"attempt": 7, "kind": "connected", "rx_ms": 1790907113448}
+{"m": {"type": "hello", "protocol": "3.0", "site_id": "DLH-1", "server_time_ms": 1790907113533, "vehicles": ["HT-01", "HT-02", "HT-03", "HT-04", "HT-05", "HT-06", "HT-07", "HT-08", "HT-09", "HT-10", "HT-11", "HT-12"], "route": [{"segment_id": "SEG-BAY", "zone_id": "BAY", "length_m": 80.0, "kind": "bay", "start_m": 0.0}, {"segment_id": "SEG-DEC-1", "zone_id": "DECLINE", "length_m": 250.0, "kind": "transit", "start_m": 80.0}, {"segment_id": "SEG-DEC-2", "zone_id": "DECLINE", "length_m": 250.0, "kind": "transit", "start_m": 330.0}, {"segment_id": "SEG-L4N-1", "zone_id": "L4_NORTH", "length_m": 200.0, "kind": "transit", "start_m": 580.0}, {"segment_id": "SEG-DRAW-12", "zone_id": "DRAW_12", "length_m": 60.0, "kind": "load", "start_m": 780.0}, {"segment_id": "SEG-L4S-1", "zone_id": "L4_SOUTH", "length_m": 200.0, "kind": "transit", "start_m": 840.0}, {"segment_id": "SEG-INC-1", "zone_id": "INCLINE", "length_m": 250.0, "kind": "transit", "start_m": 1040.0}, {"segment_id": "SEG-INC-2", "zone_id": "INCLINE", "length_m": 250.0, "kind": "transit", "start_m": 1290.0}, {"segment_id": "SEG-TIP-1", "zone_id": "TIP", "length_m": 60.0, "kind": "dump", "start_m": 1540.0}], "loop_length_m": 1600.0, "zones": [{"zone_id": "BAY", "status": "OPEN", "effective_at_ms": null, "reason": null}, {"zone_id": "DECLINE", "status": "OPEN", "effective_at_ms": null, "reason": null}, {"zone_id": "L4_NORTH", "status": "OPEN", "effective_at_ms": null, "reason": null}, {"zone_id": "DRAW_12", "status": "CLOSING", "effective_at_ms": 1790907186728, "reason": "BLAST_WINDOW"}, {"zone_id": "L4_SOUTH", "status": "OPEN", "effective_at_ms": 1790906977651, "reason": "CLEARED"}, {"zone_id": "INCLINE", "status": "OPEN", "effective_at_ms": null, "reason": null}, {"zone_id": "TIP", "status": "OPEN", "effective_at_ms": null, "reason": null}], "leases": [], "site": {"name": "<redacted>"}}, "kind": "msg", "rx_ms": 1790907113504}
