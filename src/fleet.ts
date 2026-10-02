@@ -480,19 +480,24 @@ export class FleetState {
 
   // ---- evaluation ----
 
+  // Precedence: no data at all; then silence, the most basic fact; then contradiction; then the age
+  // of the position. A frozen truck that goes quiet is silent, and its range keeps the pre-freeze
+  // anchor (#rangeOf).
   #confidence(t: Truck, now: number): { c: Confidence; reason: string } {
     if (t.lastAccepted === null) return { c: 'unknown', reason: 'no data received yet' };
-    if (this.#isContradicted(t, now)) {
+    const silent = PARAMS.truckSilentAfter.value, old = PARAMS.truckOldAfter.value;
+    const msgAge = now - t.lastAccepted;
+    const frozen = this.#isContradicted(t, now);
+    if (msgAge >= silent && t.position) {
+      return { c: 'silent', reason: `no message for ${secs(msgAge)}${frozen ? '; its last data was frozen' : ''}` };
+    }
+    if (frozen) {
       const s = t.still!;
       return { c: 'contradicted', reason: `reports ${t.state?.value ?? '?'} at ${t.speed?.value ?? '?'} m/s but has not moved for ${secs(now - s.movingSince!)}` };
     }
-    if (!t.position) return { c: 'unknown', reason: 'no valid position reported yet' };
-    const msgAge = now - t.lastAccepted;
+    if (!t.position) return { c: 'unknown', reason: msgAge >= silent ? `no message for ${secs(msgAge)}, and never a valid position` : 'no valid position reported yet' };
     const posAge = now - t.position.atLocal;
-    const silent = PARAMS.truckSilentAfter.value, old = PARAMS.truckOldAfter.value;
-    if (posAge >= silent) {
-      return { c: 'silent', reason: msgAge >= silent ? `no message for ${secs(msgAge)}` : `no valid position for ${secs(posAge)}; messages still arriving` };
-    }
+    if (posAge >= silent) return { c: 'silent', reason: `no valid position for ${secs(posAge)}; messages still arriving` };
     if (posAge >= old) return { c: 'old', reason: `last position ${secs(posAge)} ago` };
     return { c: 'live', reason: 'reporting normally' };
   }
@@ -502,7 +507,7 @@ export class FleetState {
     if (!site) return { anchor: null, range: null };
     if (!t.position) return { anchor: null, range: { startM: 0, lengthM: site.loopLengthM } };
     const s = t.still;
-    const anchor = c === 'contradicted' && s
+    const anchor = this.#isContradicted(t, now) && s
       ? { loopM: s.pos, atLocal: s.lastStationaryAt ?? s.firstAt }
       : { loopM: t.position.value.loopM, atLocal: t.position.atLocal };
     const manual = t.control?.value.mode === 'MANUAL' || t.state?.value === 'MANUAL' || (t.control?.value.operatorId ?? null) !== null;

@@ -72,6 +72,20 @@ test('L2.24 the contradiction clears when the position moves again', () => {
   assert.equal(r.truck().frozenEpisodes, 1);
 });
 
+test('a frozen truck that then goes quiet is silent, and its range still grows from before the freeze', () => {
+  const r = rig();
+  r.send({ seq: 1, t_device_ms: T0, offset_m: 39.6, speed_mps: 2 });
+  r.advance(HZ5);
+  const frozenFrom = r.clock.now();
+  repeat(r, 4_000, { offset_m: 40, speed_mps: 2 }, { seq: 2 });
+  assert.equal(r.truck().confidence, 'contradicted');
+  r.advance(PARAMS.truckSilentAfter.value);
+  const t = r.truck();
+  assert.equal(t.confidence, 'silent');
+  assert.match(t.confidenceReason, /last data was frozen/);
+  assert.equal(t.anchor?.atServerMs, frozenFrom, 'anchored where the position stopped changing, not at the last frozen message');
+});
+
 test('L2.25a LOADING, identical bodies for 20 s: not flagged', () => {
   const r = rig();
   repeat(r, 20_000, { state: 'LOADING', speed_mps: 0, segment_id: 'SEG-DRAW-12', zone_id: 'DRAW_12', offset_m: 59.95 });
