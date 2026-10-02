@@ -16,17 +16,31 @@ checked against raw data (`CLAUDE.md`).
   is added to `test/seeds/regressions` and runs in CI from then on.
 - **Two kinds of truth.** The product decides from what it *believes* (the data it received). Only
   the fake gateway knows what *is*. A rule is always stated against one or the other, never vaguely.
+- **The site might be different** (`CLAUDE.md` invariant 7). Tests that use this site's numbers say
+  so; the L4 suite also runs against a different site (L4.S).
+
+## Thresholds
+
+L4.R1's 10 s rule means nothing until these are set. Starting values, checked against all three
+live captures; task 2 owns them and must re-check any change against the captures (L2.26).
+
+| Threshold | Value | Why | Captures |
+|---|---|---|---|
+| Truck **old** (shown aged) | no message for 2 s | longest normal gap was 1.67 s | — |
+| Truck **silent** (could be anywhere it could reach) | no message for 5 s | well above normal gaps; leaves 5 s of the 10 s budget | flags only the known silent trucks |
+| Truck **frozen** (contradicted) | `TRAMMING`/`MANUAL`, speed ≥ 0.5 m/s, position moved < 0.05 m for 3 s | 3 s at 2 m/s is 6 m that never happened | flags exactly the one frozen truck per run, nothing else |
+| **Link down** | no heartbeat for 5 s | 2.5 heartbeat intervals | — |
 
 ## Task → cases
 
 | PLAN task | Must pass |
 |---|---|
 | 1. Fake gateway | L0 (all) |
-| 2. Ingest and fleet state | L1, L2.1–L2.25, L3 |
+| 2. Ingest and fleet state | L1, L2.1–L2.28, L3; owns the thresholds |
 | 3. Gateway link | L2.40–L2.44, L5 link rows, L6.1–L6.2 |
-| 4. Command registry | L2.30–L2.39, L5 command rows, L8.1–L8.3 |
-| 5. Blast engine | L2.1–L2.8, L4, L5 (all) |
-| 6. Server, login, UI, driving | L6.3–L6.5, L7, L8, L9 |
+| 4. Command registry | L2.30–L2.39, L5 command rows, L6.6, L8.1–L8.3 |
+| 5. Blast engine and auto-resume | L2.1–L2.8, L2.50–L2.54, L4, L5 (all) |
+| 6. Server, login, alerting, UI, driving | L2.60–L2.64, L6.3–L6.5, L7, L8, L9 |
 | 7. Deploy and soak | L10, L12, L13; L11 is run by a person |
 
 ---
@@ -46,7 +60,10 @@ returns the original ack, `ACCEPTED` then not executed, reverse at full autonomo
 during the outage), lost ack, `ACCEPTED`-then-ignored, frozen message (moving and stationary),
 silent truck, `seq` reset, truncated line, fractional SoC, malformed fields, clock skew, duplicates,
 reordering, weak pack, `HYD_PRESSURE_LOW`, `BATTERY_DEPLETED`, two zones closing at once, cancelled
-blast, slow reader (drop a client more than 4 MB behind).
+blast, BAY closing (open question 5), slow reader (drop a client more than 4 MB behind).
+
+**L0.S Site variants.** The fake can serve a different site: different route and segment lengths,
+zone names, loop length, number of trucks and notice length. Used by L4.S.
 
 **L0.P Parameters for unverified behaviour.** Each is run both ways in L4:
 
@@ -63,7 +80,7 @@ Queuing is re-probed live once DRAW_12 is not under a blast. **That sends real c
 |---|---|
 | L0.C1 | Each fixture's fault, injected into the fake, produces a stream that `research/report.py` flags the same way it flags the fixture |
 | L0.C2 | `research/probe.py`, pointed at the fake (which serves TLS with a test certificate, passed via `SSL_CERT_FILE`), produces the same ack sequence and reasons as the live probe for S1, S3–S8 |
-| L0.C3 | Over a 15-minute fake day: telemetry ~5 Hz per truck, duplicates ~2 %, reordering ~6 %, loss ~3 %, truncation ~0.2 %, notice 120 s, closures 66–111 s, link drops 20–45 s. Each within the ranges in `research/README.md`, or the gap written down |
+| L0.C3 | Over a 15-minute fake day, each statistic falls within the ranges measured in `research/README.md` ("Radio and blast statistics"): received telemetry rate, duplicates, reordering, loss, truncation, notice length, closure length, blast spacing, link-drop length. Any gap is written down |
 | L0.C4 | The fake is deterministic: the same seed gives a byte-identical stream |
 
 ## L1. Injectable time
@@ -72,6 +89,7 @@ Queuing is re-probed live once DRAW_12 is not under a blast. **That sends real c
 |---|---|
 | L1.1 | A lint rule or test fails the build if any module outside the clock adapter calls `Date.now`, `new Date()`, `performance.now` or timers directly |
 | L1.2 | A full blast cycle (CLOSING → CLOSED → OPEN) runs in under 100 ms of real time |
+| L1.3 | A test fails the build if product code (not tests or fixtures) contains this site's literals: zone names, segment ids, `1600`, the notice length, `HT-` truck ids |
 
 ## L2. Pure logic, table-driven
 
@@ -86,7 +104,7 @@ Queuing is re-probed live once DRAW_12 is not under a blast. **That sends real c
 | L2.5 | Reachable set for a silent truck, the same way, from its last message |
 | L2.6 | Zones overlapping a reachable set: a set that straddles a boundary counts as inside both zones |
 | L2.7 | A truck that cannot get out before `effective_at` (DECLINE ~167 s against 120 s of notice) is flagged |
-| L2.8 | The upstream trucks to hold before reversing a truck out of a zone: those behind it within its reverse path plus a margin |
+| L2.8 | Hold before entry: a truck outside a closing zone whose path enters it before it reopens, and which cannot pass through before `effective_at`, is held before the boundary, with a margin for command delay (6 s × speed) and telemetry age |
 
 **Ingest, one case per fault class**
 
@@ -120,6 +138,14 @@ Queuing is re-probed live once DRAW_12 is not under a blast. **That sends real c
 | L2.25c | `IDLE` or `CHARGING` in the bay | **Not** flagged |
 | L2.25d | `MANUAL` with deadman true, speed 0 | **Not** flagged |
 | L2.25e | `MANUAL`, speed > 0, position unchanged | Flagged |
+| L2.26 | The thresholds, run over all three full captures | Frozen flags only the frozen trucks; silent flags only the silent trucks; nothing else |
+
+**Battery**
+
+| ID | Case |
+|---|---|
+| L2.27 | Drain against the fleet: a truck draining well above the fleet median is flagged (fixture `weak-pack`: HT-06 flagged early, no other truck flagged) |
+| L2.28 | Can it reach the bay: remaining charge against the energy to reach the bay by the shorter direction, loaded or empty, at the truck's own drain rate. Warn while there is still time to act; the warning names the action (return to bay) and leaves it to the operator |
 
 **Command registry**
 
@@ -146,6 +172,26 @@ Queuing is re-probed live once DRAW_12 is not under a blast. **That sends real c
 | L2.43 | During an outage every truck ages; nothing is shown as live |
 | L2.44 | `auth_error`: reason shown; `TOO_MANY_CONNECTIONS` and `SERVER_FULL` back off, the others stop and alarm |
 
+**The safety check below every command path**
+
+| ID | Case |
+|---|---|
+| L2.50 | `RETURN_TO_BAY` takes the shorter direction; if that passes through a zone that is closing or closed, the command is refused with the reason (operator) or not issued (system) |
+| L2.51 | An operator `RESUME` of a truck the system held for a blast, while that zone is not open: refused, naming the zone and when it reopens |
+| L2.52 | `EXIT_ZONE` picks the nearest boundary itself; if that lands the truck in an adjacent zone that is also closing or closed and that it cannot clear, the system does not issue it blindly: it holds, raises the can't-clear alarm, and offers driving out the other way |
+| L2.53 | The system's own commands pass through the same check as operators' (one code path, tested once from each caller) |
+| L2.54 | BAY closing (open question 5): `EXIT_ZONE` is refused there, so trucks in BAY are alarmed at once with "drive it out or hold the shot" |
+
+**Alerting** (`CONTEXT.md` assumption 11: interrupt only for action needed in the next minute)
+
+| ID | Case |
+|---|---|
+| L2.60 | These **interrupt** (sound and a banner that needs acknowledging): can't-clear alarm; a command still unconfirmed after its last retry on a truck in or approaching a closing zone; a truck that cannot reach the bay on its charge; link down while any zone is closing or closed; an e-stop not delivered |
+| L2.61 | These are **visible but silent**: data-quality counts, controller restarts, a lost ack later confirmed, a truck aged but not yet silent, a frozen or silent truck outside any closing zone, a weak pack that can still reach the bay |
+| L2.62 | Every silent event shows the rule that kept it silent |
+| L2.63 | An interrupting alarm that nobody acknowledges re-alerts, and reaches the supervisor after a set time |
+| L2.64 | One cause, one alarm: the same truck and reason does not re-interrupt while the first is open |
+
 ## L3. Fixture replay
 
 Each fixture in `research/fixtures/` is replayed through ingest and fleet state with injected time.
@@ -159,9 +205,10 @@ The assertion is what the operator would see.
 | L3.4 | `truncated-lines` | Nothing changes on screen; the data-quality count rises by 87 |
 | L3.5 | `fractional-soc` | HT-12's SoC shown as reported, with a flag, not as 82 % |
 | L3.6 | `accepted-then-ignored-resume` | RESUME shown as "accepted, not executed", then retried, then confirmed |
-| L3.7 | `reverse-exit-zone` | EXIT_ZONE progress shown, and the trucks behind it highlighted |
+| L3.7 | `reverse-exit-zone` | EXIT_ZONE progress shown: direction, distance to the boundary, confirmed once outside |
 | L3.8 | `two-zones-closing` | Both zones shown closing, each with its own countdown and trucks |
 | L3.9 | `link-drop-in-notice` | Link-down banner; on reconnect DRAW_12 still closing, with the time left recalculated |
+| L3.10 | `weak-pack` | HT-06 flagged as draining faster than the fleet within its first minute, and warned that it cannot reach the bay while it still could; then `BATTERY_DEPLETED`: needs a tow |
 
 ## L4. Blast safety, property-tested
 
@@ -174,20 +221,33 @@ Seeded random days from the fake gateway, mixing every fault in L0.F. 200 seeds 
 - *The data allows the conclusion* at the latest of: `CLOSING` delivered; reconnect after a link drop;
   the first delivery of the evidence that the truck cannot clear (a fault, a contradiction past
   threshold, silence past threshold, a confirmation deadline missed).
-- *Can't-clear alarm*: an alarm naming the truck, the zone and the reason.
+- *Could have been cleared*: the data allowed the conclusion in time; time to clear plus command
+  delay fits in the time left; and the truck was not interlocked (fault, e-stop, depleted battery).
+  The same for *could have been held before entry*.
+- *Can't-clear alarm*: an alarm naming the action ("radio the shot firer to hold the shot"), the
+  truck, the zone and the reason.
 
 **Rules.**
 
 | ID | Rule | Checked against | Faults covered |
 |---|---|---|---|
+| L4.R0 | Every truck that could have been cleared from a closing zone, or held before entering it, is outside the zone when it closes. **This is what stops a system that does nothing, and alarms about everything, from passing** | Truth | Every detectable fault |
 | L4.R1 | A can't-clear alarm goes up within 10 s of the data allowing the conclusion, for every truck inside a `CLOSED` zone | Truth | Every detectable fault |
 | L4.R2a | Never recommend "clear" while the system believes a truck might be inside | Belief | **Every fault, including the undetectable one.** This never leaves the suite |
 | L4.R2b | Never recommend "clear" while a truck is inside | Truth | Every detectable fault |
 | L4.R2c | As L4.R2b, for a truck frozen while stopped that then moves | Truth | The undetectable fault, run separately. Violations are **counted, not failed**, and reported as the README §5 limit of enforcement |
+| L4.R3 | Every truck the system held for a zone is resumed within 15 s of the zone reopening (`CLEARED` or `CANCELLED`), unless it is still blocked: a lease, a fault, an operator's hold, or a path into another zone that is closing or closed | Truth | Every fault |
+| L4.R4 | A hold placed by an operator is never resumed by the system | Truth | Every fault |
+| L4.R5 | The system never resumes a truck into a zone that is closing or closed | Truth | Every fault |
 | L4.M1 | Unnecessary holds: blast holds on trucks whose true path would never have entered the zone while it was closed | Truth | Every fault. **A metric, not a pass/fail**; a rise is a regression to explain |
+| L4.M2 | Time trucks sat after a reopen before moving again | Truth | Metric |
+| L4.M3 | False alarms: can't-clear alarms for trucks that then cleared in time. Crying wolf is how the old system got muted | Truth | Metric |
+
+**L4.S A different site.** The whole L4 suite also runs against L0.S site variants: a different route,
+7 and 20 trucks, a 60 s notice. Every rule must still hold.
 
 **L4.X Combinations to fill first** (seen live): a link drop during the notice; a frozen truck in a
-closing zone; two zones closing at once.
+closing zone; two zones closing at once. Then BAY closing.
 
 ## L5. Fault-injection matrix
 
@@ -206,6 +266,8 @@ L4 plus the expected operator view are asserted. The three cells marked ★ come
 | Two zones closing | – | ★ | ✓ | ✓ |
 | Fault in a closing zone | – | ✓ | ✓ | ✓ |
 | Cancelled blast | – | ✓ | – | ✓ |
+| BAY closing | – | ✓ | ✓ | ✓ |
+| Zone reopens (auto-resume) | – | ✓ | ✓ | ✓ |
 
 Link and command rows belong to tasks 3 and 4; the CLOSING column to task 5.
 
@@ -218,6 +280,7 @@ Link and command rows belong to tasks 3 and 4; the CLOSING column to task 5.
 | L6.3 | Browser drops mid-drive: the truck stops on its deadman; the service sends nothing after the last fresh input |
 | L6.4 | Several browsers open: one gateway connection in total (the site allows 16) |
 | L6.5 | The service survives a browser sending malformed or hostile messages |
+| L6.6 | Every command is written to the log **before** it is sent, so a kill between the two still leaves it to replay (L6.1 depends on this). A command older than its deadline at restart is marked expired, not sent |
 
 ## L7. Remote driving
 
@@ -230,6 +293,8 @@ Link and command rows belong to tasks 3 and 4; the CLOSING column to task 5.
 | L7.5 | **Stuck key:** the window loses focus or is hidden with a key held → the browser sends throttle 0 and stops streaming. The browser never sends keyup in that case, so this is tested in Playwright |
 | L7.6 | Driving into a closed zone is refused; driving out never is |
 | L7.7 | A faulted truck that allows limp-home can be driven at 1.0 m/s; one with `BATTERY_DEPLETED` cannot, and the UI says it needs a tow |
+| L7.8 | E-stop pressed while the site link is down: shown as **not delivered**, never as done; sent as soon as the link returns (stopping is always safe), and shown as done only when telemetry confirms `ESTOPPED` |
+| L7.9 | Hand-back: releasing control leaves the truck `HOLDING` (`PROTOCOL.md` §6), so the UI makes the next step obvious, with resume one action away and the truck marked as held by that operator until then |
 
 ## L8. Multiple operators and audit
 
@@ -239,7 +304,8 @@ Link and command rows belong to tasks 3 and 4; the CLOSING column to task 5.
 | L8.2 | Only a supervisor can force a takeover |
 | L8.3 | `operator_id` in a browser payload is ignored; the session's is used |
 | L8.4 | "Who moved HT-06 at 3:12?" answered by one query: operator or system, the rule and inputs for system actions, the ack and the effect |
-| L8.5 | The audit log is append-only and survives a restart |
+| L8.5 | The audit log is append-only and survives a restart; system and operator actions are in the same log, each with what, when and why |
+| L8.6 | Every route and the websocket refuse an unauthenticated user |
 
 ## L9. UI, in a real browser (Playwright)
 
@@ -251,6 +317,7 @@ Only these; no broad UI suite.
 | L9.2 | Site link down: the picture visibly ages and a banner says so |
 | L9.3 | Service down: the browser says it is disconnected; it never shows a frozen picture as current |
 | L9.4 | Stuck key (L7.5) |
+| L9.5 | Hand-back (L7.9): after release, the held truck and the resume action are obvious without reading the docs |
 
 ## L10. Live soak
 

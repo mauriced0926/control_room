@@ -20,15 +20,24 @@ These are not negotiable. If a task seems to need one broken, stop and ask.
 3. **Drive input is relayed only while fresh,** and never re-sent or synthesised by the service.
    Silence means stop: a browser that goes quiet must let the deadman stop the truck.
 4. **No model on the control path.** Nothing an LLM produces sends a command.
-5. **Blast safety: never silent.** A truck may be inside a `CLOSED` zone only if a can't-clear
-   alarm, with its reason, went up within 10 s of `CLOSING`, or of the data first allowing that
-   conclusion, whichever is later (`TESTING.md` L4).
+5. **Blast safety: get every truck out that can be got out; alarm for the rest.** Every truck
+   that can be cleared from a closing zone, or held before entering it, in the time left is
+   outside when it closes. For a truck that can't, a can't-clear alarm ("radio the shot firer
+   to hold the shot", with the truck, the zone and the reason) goes up within 10 s of
+   `CLOSING`, or of the data first allowing that conclusion, whichever is later. The alarm
+   never replaces evacuation (`TESTING.md` L4).
 6. **Blast safety: never wrongly clear.** The system never recommends "clear" while any truck
    might be inside. "Might" includes old, silent and contradicted data.
+7. **Nothing site-specific is a constant.** We will be run against a site we haven't seen.
+   Route, segments, zones, loop length and vehicle list come from `hello`; notice length comes
+   from each `zone_event`'s `effective_at_ms`. Speeds and delays are parameters with their source
+   noted (spec or measured), never literals scattered through the code.
 
 The rest of `CONTEXT.md`'s assumptions bind too. The ones most often forgotten: `ACCEPTED` is
 not done, so confirm the effect in telemetry. Order by `seq` within a controller run and age
-against `server_time_ms`, never the device clock. Stopping needs no person; starting always does.
+against `server_time_ms`, never the device clock. Stopping needs no person. The system restarts
+only trucks it held for a blast, once that zone reopens; every other hold waits for a person. The
+safety check sits below every command path, operators' included.
 
 ## How to work
 
