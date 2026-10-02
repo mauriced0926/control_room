@@ -158,6 +158,20 @@ go into `PLAN.md`'s "What changed" section at the end.
 - For the README's "Around the corner": on a real site, spacing would have to
   be owned somewhere. We were told not to build it here.
 
+**Decided since, for `PLAN.md`'s "What changed":**
+
+- An e-stop pressed while the site link is down stays pending, visible and
+  cancellable. It is sent automatically only if the link returns within 10 s;
+  after that the operator sees the truck's current state and confirms again.
+  Stopping is safe in isolation, not in context: a stale e-stop revokes leases
+  and could strand someone limp-homing a faulted truck out of a closing zone.
+- Unacknowledged alarms re-alert at 15 minutes and reach a supervisor at 30.
+  On nights the operator is alone and is the supervisor, so escalation there
+  means more persistent alerting to that same person.
+- System-held trucks are resumed within 15 s of their zone reopening.
+- `research/fixtures/` has ten fixtures, not the nine `PLAN.md` names: a
+  weak-pack fixture was added.
+
 Still open:
 
 5. Can BAY itself be closed for a blast? `EXIT_ZONE` is rejected in BAY, so

@@ -189,7 +189,7 @@ Queuing is re-probed live once DRAW_12 is not under a blast. **That sends real c
 | L2.60 | These **interrupt** (sound and a banner that needs acknowledging): can't-clear alarm; a command still unconfirmed after its last retry on a truck in or approaching a closing zone; a truck that cannot reach the bay on its charge; link down while any zone is closing or closed; an e-stop not delivered |
 | L2.61 | These are **visible but silent**: data-quality counts, controller restarts, a lost ack later confirmed, a truck aged but not yet silent, a frozen or silent truck outside any closing zone, a weak pack that can still reach the bay |
 | L2.62 | Every silent event shows the rule that kept it silent |
-| L2.63 | An interrupting alarm that nobody acknowledges re-alerts, and reaches the supervisor after a set time |
+| L2.63 | An interrupting alarm that nobody acknowledges re-alerts at 15 minutes and reaches a supervisor at 30. When the only operator logged in is also the supervisor (nights), escalation means more persistent alerting to that same person, not handing it on |
 | L2.64 | One cause, one alarm: the same truck and reason does not re-interrupt while the first is open |
 
 ## L3. Fixture replay
@@ -293,7 +293,7 @@ Link and command rows belong to tasks 3 and 4; the CLOSING column to task 5.
 | L7.5 | **Stuck key:** the window loses focus or is hidden with a key held → the browser sends throttle 0 and stops streaming. The browser never sends keyup in that case, so this is tested in Playwright |
 | L7.6 | Driving into a closed zone is refused; driving out never is |
 | L7.7 | A faulted truck that allows limp-home can be driven at 1.0 m/s; one with `BATTERY_DEPLETED` cannot, and the UI says it needs a tow |
-| L7.8 | E-stop pressed while the site link is down: shown as **not delivered**, never as done; sent as soon as the link returns (stopping is always safe), and shown as done only when telemetry confirms `ESTOPPED` |
+| L7.8 | E-stop pressed while the site link is down: shown as **pending, not delivered**, never as done, with a cancel. Sent automatically only if the link returns within 10 s. After that it is **not** sent: the operator sees the truck's current state and confirms again, because a stale e-stop revokes leases and could strand someone limp-homing a faulted truck out of a closing zone. Shown as done only when telemetry confirms `ESTOPPED` |
 | L7.9 | Hand-back: releasing control leaves the truck `HOLDING` (`PROTOCOL.md` §6), so the UI makes the next step obvious, with resume one action away and the truck marked as held by that operator until then |
 
 ## L8. Multiple operators and audit
