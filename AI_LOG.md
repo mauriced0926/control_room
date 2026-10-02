@@ -64,3 +64,33 @@ truck also sends identical messages.
 contradicts an unchanged position, with the true position treated as anywhere the truck could
 have reached. A truck that freezes while stationary is recorded as undetectable from telemetry
 alone (`CONTEXT.md` assumption 12; `research/README.md`).
+
+---
+
+## 3. The ingest agent's checker failed the product, and the product was right
+
+**Session:** planning session, ingest task run as a sub-agent in its own worktree, 2026-10-02.
+
+**Asked.** Task 2 (`tasks/02-ingest.md`): ingest and fleet state, tests first, from `TESTING.md`.
+The threshold test L2.26 had to run over the full captures, which aren't in the repo, so the agent
+wrote it to read their paths from an environment variable, and I ran it.
+
+**Came back.** 77 passing tests and a careful report. For L2.26 the agent built an independent
+checker that shares no code with the product, which was the right instinct. Run against the
+captures, it failed the product on run 2: HT-08 "flagged silent at +873 s with no genuine silence".
+
+**What was wrong.** The checker, not the product. It discarded any gap in a truck's messages that
+touched a link outage. In the raw capture the link returned at +866.7 s, heartbeats arrived every 2 s
+and other trucks reported, while HT-08 stayed quiet until +896.9 s: 30 s of real silence, which the
+product flagged correctly. Had I trusted the test, I would have "fixed" correct product code.
+
+**How it was found.** By reading the raw capture around the failure instead of the assertion message:
+link events, heartbeats, HT-08's messages, another truck's messages.
+
+**What was done.** The checker now cuts outages out of each gap and judges the link-up pieces on their
+own (`ae8dcf2`). L2.26 then passed on all three captures, flagging exactly the trucks found by hand.
+
+The same review ran the other way. The agent found that my `research/trim.py` wrote the weak-pack
+fixture out of arrival order, and said so rather than quietly working around it. I checked the file,
+confirmed it, and fixed the script (`8250678`). An independent check is only as good as its own
+definition of the truth, whoever wrote it.
