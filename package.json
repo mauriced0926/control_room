@@ -8,8 +8,9 @@
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.ts\"",
+    "test:slow": "node --test \"test/**/*.slow.ts\"",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test && npm run test:slow"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

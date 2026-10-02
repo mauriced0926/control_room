@@ -1,3 +1,5 @@
+// Slow (about 2.5 min of real time: it runs research/probe.py against the fake over TLS), so it runs
+// in `npm run test:slow` and `npm run check`, not in `npm test`.
 // TESTING.md L0.C2: research/probe.py, pointed at the fake over TLS, gets the same ack sequence and
 // reasons as the live probe did for S1 and S3-S8. Also the TLS transport itself.
 //
