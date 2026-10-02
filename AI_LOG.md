@@ -94,3 +94,31 @@ The same review ran the other way. The agent found that my `research/trim.py` wr
 fixture out of arrival order, and said so rather than quietly working around it. I checked the file,
 confirmed it, and fixed the script (`8250678`). An independent check is only as good as its own
 definition of the truth, whoever wrote it.
+
+---
+
+## 4. The same ack-matching mistake, three times, by two different authors
+
+**Session:** planning session; fake gateway run as a sub-agent in its own worktree, 2026-10-02.
+
+**Asked.** Task 1 (`tasks/01-fake-gateway.md`): a fake gateway that gives `research/probe.py` the same
+answers as the live site (L0.C2). In review, I compared the fake's acks with the live probe's.
+
+**Came back.** The agent reported that its own probe checker had been wrong: it paired acks with
+sends inside a 50 ms window, and S1's resend and reuse go out 50 ms apart, so the resend's ack was
+credited to the reuse. It found this in the raw file and fixed it. Then my review comparison flagged
+two S1 mismatches between the live probe and the fake.
+
+**What was wrong.** My comparison, not the fake. It matched the nth ack of a `command_id` to its nth
+send. Live, the first `HOLD`'s ack was lost, so everything after it shifted by one: exactly the
+mistake in entry 1, made again by me in the review meant to catch such things. Read correctly,
+the fake matches the live probe on every command of S1 and S3–S8 except the lost ack, which the
+fake does not inject until milestone 2.
+
+**How it was found.** The two "mismatches" were both on the one id with a lost ack; reading the raw
+send and ack lines for that id showed the shift.
+
+**What was done.** Recorded the corrected result in the merge commit (`54b6d26`). The lesson is that
+remembering doesn't work: three pieces of code by two authors made the same mistake within a day. Ack
+correlation (by time, against the latest send) belongs in one tested place, the command registry
+(`TESTING.md` L2.33), and every later tool that reads acks uses it rather than rewriting it.
