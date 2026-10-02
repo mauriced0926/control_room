@@ -21,7 +21,8 @@ These are not negotiable. If a task seems to need one broken, stop and ask.
    Silence means stop: a browser that goes quiet must let the deadman stop the truck.
 4. **No model on the control path.** Nothing an LLM produces sends a command.
 5. **Blast safety: never silent.** A truck may be inside a `CLOSED` zone only if a can't-clear
-   alarm, with its reason, went up while there was still time to hold the shot.
+   alarm, with its reason, went up within 10 s of `CLOSING`, or of the data first allowing that
+   conclusion, whichever is later (`TESTING.md` L4).
 6. **Blast safety: never wrongly clear.** The system never recommends "clear" while any truck
    might be inside. "Might" includes old, silent and contradicted data.
 
