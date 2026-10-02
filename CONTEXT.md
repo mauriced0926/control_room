@@ -1,4 +1,4 @@
-# Initial Context — DLH 
+# Initial Context — Deep Level Haulage control room
 
 Working context for this build. Written before any code, updated as things are
 learned. If you are an agent picking this up, read `BRIEF.md`,
@@ -9,13 +9,15 @@ This file is what those documents do not say out loud.
 
 A control room for 12 autonomous haul trucks on a 1.6 km one-way underground
 loop, connected to a site gateway over TLS + NDJSON, where the data is
-unreliable on purpose and a blast can close a tunnel on 'two minutes' notice.
+unreliable on purpose and a blast can close a tunnel on about two minutes' notice.
+
 ## Where things are
 
 - **Repo:** https://github.com/mauriced0926/control_room
 - **Local working copy:** `/Volumes/Transcend/control_room`
 - **Reference material:** `dlh-candidate-package/` — `BRIEF.md`,
-  `OPERATOR_NOTES.md`, `PROTOCOL.md`. Read-only: these are artifax belonging to Deus-X; not ours.
+  `OPERATOR_NOTES.md`, `PROTOCOL.md`. Read-only: they
+  belong to Deep Level Haulage, not to us.
 - **Deploys to:** `~/control_room` on the OCI ARM box (`ssh dronehal1`).
   Edit locally, build and run there.
 - **Gateway:** `dlh-gateway.fly.dev:443`, TLS, auth with
@@ -33,8 +35,8 @@ constructed. `PROTOCOL.md` and `OPERATOR_NOTES.md` contain none. Nothing in the 
 automation wanted here is deterministic and rule-based. No LLM on the control path in v1. An LLM may sit *beside* it: an operator can ask questions in plain language (answered from the fleet state and logs), or
 phrase a command, which the model turns into a **proposal** — never an action.
 The operator confirms it, and it then passes through exactly the same
-deterministic checks as a button press. Beyond the MVP floor; build only if
-time allows.
+deterministic checks as a button press. **Deferred:** `PLAN.md` leaves
+plain-language queries out of this version.
 
 
 **2. The protocol already encodes an autonomy policy: stopping is cheap,
@@ -86,7 +88,7 @@ with truck, place and time randomised. Link drops of 21–45 s landed inside a
 |---|---|
 | Blast evacuation, reconnect, dedupe, marking data stale | System, alone |
 | Can this truck clear in time; is this pack weak | System computes, **human asserts** |
-| Manual driving, forced takeover, clearing an estop, resuming autonomy | Human decides (including NLQ), system executes and records/logs |
+| Manual driving, forced takeover, clearing an estop, resuming autonomy | Human decides, system executes and records/logs |
 | Is the zone clear | System **recommends**, with the reasons it could be wrong; human checks each and decides |
 | Telling the shot firer | Human only — "I don't fire until **they** tell me it's clear" |
 | Clearing a fault | Never — `PROTOCOL.md` §4.5: "a fault cannot be cleared from the control room" |
@@ -161,8 +163,9 @@ Do not wait on these. Assumptions below; record what the answers change.
    why. An operator's hold is never auto-resumed — only they know why they
    stopped it. A hold the system placed for a blast, once the zone has
    reopened, positions are fresh and nothing else is holding the truck, is
-   the one candidate for automatic resume. That behaviour is built but off
-   by default, pending the answer to open question 2.
+   the one candidate for automatic resume. **Deferred:** not built in this
+   version (`PLAN.md`); resuming is one click for every truck the system
+   held. Revisit with the answer to open question 2.
 
    A hold can also become its own hazard — a weak pack held on the incline,
    or a stopped truck blocking the loop behind it. The system flags these
@@ -213,7 +216,8 @@ Do not wait on these. Assumptions below; record what the answers change.
     of three runs. Never replace the vendor's number with ours; flag a
     fractional value rather than silently scaling it. Sending a weak truck
     home stays the operator's decision.
-14. **The model proposes, never acts.** Natural-language queries and command
+14. **The model proposes, never acts.** **Deferred:** plain-language queries
+    are not in this version (`PLAN.md`). If built later, queries and command
     proposals are allowed; every command still needs operator confirmation
     and passes the same deterministic checks as the UI.
 15. **Every supervisory command is confirmed in telemetry, against a
@@ -260,25 +264,30 @@ Same author, same patterns, different domain. Carries over:
 - **A conformance observer** that speaks the protocol and asserts the other
   side behaves — the brief invites this: "the simulator is ours, and its
   internals are part of what's being tested."
-- **Propose-then-confirm NLQ** — the model resolves intent; state, checks and dispatch stay deterministic.
+- **Propose-then-confirm plain-language queries** — the model resolves intent;
+  state, checks and dispatch stay deterministic. Deferred with the feature.
+
 Does **not** carry over: lat/lon geometry (this is 1-D along a loop, with
 wrap), and anything about aircraft.
 
 ## Deployment target
 
-Oracle Cloud ARM box, already provisioned and in use(called drone-hal); unless an a1 box called control-room is provisioned -- currently being attempted via cron job:
+Oracle Cloud ARM box `dronehal1`, already in use by another project:
 
 - 1 OCPU, 5.5 GiB RAM, 30 GB disk (~18 GB free), Oracle Linux 9, aarch64
-- Node 22.23.2, git, rsync, Chromium dependencies installed
+- Node 22.23.2, git, rsync, Chromium dependencies installed; **no Docker**
 - Caddy on 80/443 with a TLS cert via sslip.io; firewalld allows http/https
 - **Port 8080 is taken** by an existing project — pick another and add a Caddy
   route
-- **Nothing survives a reboot** — double check -- no systemd unit exists yet. Fix this here;
-  the graders run the system unattended
+- **Nothing survives a reboot** — no systemd unit exists yet. Whatever runs
+  here must restart on boot; the graders run the system unattended
 - One OCPU is the real constraint, not memory
 
-`docker compose up` is what the brief prefers. Must read `GATEWAY_HOST`,
-`GATEWAY_PORT` and `GATEWAY_EMAIL` from the environment.
+`docker compose up` is what the brief prefers, and the graders will likely
+run it on x86, so the image must build for both amd64 and arm64. Must read
+`GATEWAY_HOST`, `GATEWAY_PORT` and `GATEWAY_EMAIL` from the environment. Pin
+Node 24: on Node 22, `node:sqlite` needs no flag but prints an
+`ExperimentalWarning` at every start; on 24.15 it prints nothing.
 
 ## Working agreements
 
