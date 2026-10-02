@@ -1,12 +1,17 @@
 // TESTING.md L1.1 and L1.3: rules about what product code may contain, checked over src/.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const SRC = new URL('../src/', import.meta.url).pathname;
+// The fake gateway (test infrastructure) is held to the same rules: it takes a Clock, and its model
+// knows no site. Its default site config is the one place this site's literals belong.
+const FAKE = new URL('../fake/', import.meta.url).pathname;
+const FAKE_SITE_CONFIG = 'dlh1.ts';
 
 function sourceFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.name.startsWith('._') ? [] : e.isDirectory() ? sourceFiles(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : [],
   );
@@ -58,5 +63,17 @@ test('L1.3 the rule catches each kind of site literal', () => {
 
 test('L1.3 product code contains none of this site\'s literals', () => {
   const found = sourceFiles(SRC).flatMap((f) => violations(readFileSync(f, 'utf8'), SITE_LITERALS).map((v) => `${relative(SRC, f)} ${v}`));
+  assert.deepEqual(found, []);
+});
+
+test('L1.1 the fake gateway never reads the wall clock', () => {
+  const found = sourceFiles(FAKE).flatMap((f) => violations(readFileSync(f, 'utf8'), WALL_CLOCK).map((v) => `fake/${relative(FAKE, f)} ${v}`));
+  assert.deepEqual(found, []);
+});
+
+test('L1.3 the fake gateway\'s model contains none of this site\'s literals (only its default config does)', () => {
+  const found = sourceFiles(FAKE)
+    .filter((f) => relative(FAKE, f) !== FAKE_SITE_CONFIG)
+    .flatMap((f) => violations(readFileSync(f, 'utf8'), SITE_LITERALS).map((v) => `fake/${relative(FAKE, f)} ${v}`));
   assert.deepEqual(found, []);
 });
