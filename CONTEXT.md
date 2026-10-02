@@ -47,7 +47,8 @@ It can be started two ways, both a deliberate human act: `RESUME` — which is
 `IDLE` — and fresh drive input after a deadman. §6.4 is decisive: when a lease
 expires the vehicle holds and "does **not** return to autonomous operation by
 itself." Match this. Our system stops trucks freely and never starts one by default 
-without a person.
+without a person — with one exception the site asked for (answer 2): trucks the
+system itself held for a blast are resumed by the system once the zone reopens.
 
 **3. Reconnection is solvable, not lossy.** The gateway queues nothing for a
 disconnected client, so an ack for an in-flight command is lost. But §5 says
@@ -88,16 +89,19 @@ with truck, place and time randomised. Link drops of 21–45 s landed inside a
 |---|---|
 | Blast evacuation, reconnect, dedupe, marking data stale | System, alone |
 | Can this truck clear in time; is this pack weak | System computes, **human asserts** |
-| Manual driving, forced takeover, clearing an estop, resuming autonomy | Human decides, system executes and records/logs |
+| Resuming trucks the system held for a blast, once the zone reopens | System, alone (answer 2), logged with rule and inputs |
+| Manual driving, forced takeover, clearing an estop, resuming any other hold | Human decides, system executes and records/logs |
 | Is the zone clear | System **recommends**, with the reasons it could be wrong; human checks each and decides |
-| Telling the shot firer | Human only — "I don't fire until **they** tell me it's clear" |
+| Telling the shot firer | Human only, by radio (answer 1) — "I don't fire until **they** tell me it's clear" |
 | Clearing a fault | Never — `PROTOCOL.md` §4.5: "a fault cannot be cleared from the control room" |
 
 
 Ken's interlock stays human-to-human. The system's job is to make that
 sentence safe to say in ten seconds: it recommends clear or not clear, and
 shows the evidence that would make it wrong — stale positions, faulted
-trucks, anything near a boundary. "Not clear" takes effect immediately and
+trucks, anything near a boundary. A can't-clear alarm names the action:
+"radio the shot firer to hold the shot", with the truck, the zone and the
+reason. "Not clear" takes effect immediately and
 needs no agreement. "Clear" requires the operator to acknowledge each doubt
 before they can confirm it, and overriding a "not clear" to "clear"
 requires a recorded reason. Both the recommendation and the decision go in
@@ -109,22 +113,52 @@ babysitting" is a mandate to automate the routine. "Rather see nothing than
 see something wrong" is a limit on **inference**, not on action. Act freely,
 speak carefully.
 
-## Open questions (sent, awaiting reply)
+## Questions to the site
+
+Questions 1–4 were sent before any code and have been **answered**. The answers
+go into `PLAN.md`'s "What changed" section at the end.
 
 1. Telling the shot firer a truck cannot clear — operator phones Ken, or is
    there a channel to integrate with?
+   **Answered:** the operator and Ken talk directly, by radio. Ken calls about
+   two minutes before firing, around when the notice arrives, and doesn't
+   fire until the operator says clear. In doubt, the operator asks him to hold
+   the shot: costly, always right. The gateway can't reach the blasting crew.
+   Clearing people isn't our problem; clearing trucks is.
 2. May the control room start trucks moving on its own after a cancelled
    blast, or does resumption need a human?
+   **Answered:** the system may restart trucks on its own once a zone reopens,
+   whether the blast happened or was called off. No sign-off needed.
 3. Who owns headway between trucks, given vehicles have no collision sensing
    and `EXIT_ZONE` may reverse?
-   *Now with evidence:* the probe's `EXIT_ZONE` reversed an empty truck at
-   3.0 m/s up DECLINE toward the trucks coming down behind it, and the sim
-   lets trucks run within 5 m of each other. We assume the control room owns
-   it during evacuation (assumption 16).
+   **Answered:** spacing is out of scope; assume it is handled elsewhere and
+   don't build for it. The simulator doesn't model trucks interacting: they
+   never block or hit each other, even reversing.
 4. Is "the system did it, under the blast-evacuation rule" an acceptable
    answer to Marta's inspector?
+   **Answered:** yes. The system acting on its own is expected, especially
+   for blasts, since nights are one operator. Its actions go in the same log
+   as the operators', showing what it did, when and why.
 
-Would still ask:
+**What the answers changed:**
+
+- **Auto-resume is in the MVP and on by default** (assumption 2). When a zone
+  reopens (`CLEARED` or `CANCELLED`), the system resumes the trucks *it* held
+  for that blast — never a truck an operator held, never one with a lease or a
+  fault, and never into another zone that is closing or closed. The resume is
+  confirmed like any other command and logged as the system, with rule and
+  inputs.
+- **Coordinated evacuation is dropped** (assumption 16): no upstream holds
+  before reversing a truck out. With spacing out of scope they would only be
+  unnecessary stops. Hold-before-entry stays; that is about the zone, not
+  spacing.
+- **A can't-clear alarm names the action:** "radio the shot firer to hold the
+  shot", with the truck, the zone and the reason.
+- **System and operator actions share one log,** with what, when and why.
+- For the README's "Around the corner": on a real site, spacing would have to
+  be owned somewhere. We were told not to build it here.
+
+Still open:
 
 5. Can BAY itself be closed for a blast? `EXIT_ZONE` is rejected in BAY, so
    remote driving would be the only way out.
@@ -150,22 +184,21 @@ Do not wait on these. Assumptions below; record what the answers change.
    quiet — otherwise a dropped browser would keep a truck moving and defeat
    the deadman. Silence means stop.
 
-2. **Resuming autonomy needs a human by default; stopping never does.**
-   Elapsed time does not make restarting safer — a held truck is the
-   lowest-hazard state there is, and an hour of stillness costs production,
-   not safety. So a long hold escalates rather than acts: it ages visibly on
-   the screen, re-alerts, and reaches the supervisor if nobody responds. Ken's
-   "not sat there for an hour because nobody remembered" is answered by the
-   system remembering, and by resumption being one click for every truck it
-   held.
+2. **Stopping never needs a person; the system resumes only its own blast
+   holds.** *(Revised by answer 2.)* Holds are not all alike, and the system
+   tracks who placed each one and why. When a zone reopens (`CLEARED` or
+   `CANCELLED`), the system resumes the trucks it held for that blast, on by
+   default — never a truck an operator held (only they know why they stopped
+   it), never one with a lease or a fault, and never into another zone that
+   is closing or closed. The resume goes through command confirmation like
+   any other command, and is logged as the system with the rule and inputs.
+   Ken's "not sat there for an hour because nobody remembered" is answered
+   by the system remembering.
 
-   Holds are not all alike, and the system tracks who placed each one and
-   why. An operator's hold is never auto-resumed — only they know why they
-   stopped it. A hold the system placed for a blast, once the zone has
-   reopened, positions are fresh and nothing else is holding the truck, is
-   the one candidate for automatic resume. **Deferred:** not built in this
-   version (`PLAN.md`); resuming is one click for every truck the system
-   held. Revisit with the answer to open question 2.
+   Every other hold stays until a person resumes it, because elapsed time
+   does not make restarting safer. A long hold escalates rather than acts: it
+   ages visibly on the screen, re-alerts, and reaches the supervisor if
+   nobody responds.
 
    A hold can also become its own hazard — a weak pack held on the incline,
    or a stopped truck blocking the loop behind it. The system flags these
@@ -231,12 +264,12 @@ Do not wait on these. Assumptions below; record what the answers change.
     a retry must never displace a different command we queued. Queue
     behaviour is **unverified** (the probe's S2 never ran); test it in the
     fake gateway.
-16. **Evacuation is coordinated, not per-truck.** `EXIT_ZONE` reverses at
-    full speed toward the trucks behind, and nothing on the trucks prevents
-    a collision. Hold the trucks upstream first, then reverse the one below
-    them; and hold trucks *before* they enter a closing zone — DECLINE takes
-    ~167 s to cross against 120 s of notice, so a truck entering late cannot
-    get through.
+16. **Hold trucks before they enter a closing zone.** DECLINE takes ~167 s
+    to cross against 120 s of notice, so a truck entering late cannot get
+    through. *(Revised by answer 3:)* evacuation is per-truck. Spacing is out
+    of scope and the simulator doesn't model trucks interacting, so there
+    are no upstream holds before reversing a truck out; they would only be
+    unnecessary stops.
 17. **The blast budget survives a link drop.** A drop can eat 45 s of the
     120 s notice. On reconnect, act on the `hello` snapshot at once; plan
     against the time left, not the time given. Several zones can close at
