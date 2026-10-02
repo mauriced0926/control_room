@@ -6,7 +6,7 @@ export type Source = 'spec' | 'measured' | 'decided';
 
 export interface Param {
   readonly value: number;
-  readonly unit: 'm/s' | 'ms' | 'm' | '%';
+  readonly unit: 'm/s' | 'ms' | 'm' | '%' | 'count' | 'ratio';
   readonly source: Source;
   readonly ref: string;
 }
@@ -44,6 +44,23 @@ export const PARAMS = {
   frozenMinReportedSpeed: p(0.5, 'm/s', 'decided', 'below this a truck may honestly be creeping'),
   frozenMaxMovement: p(0.05, 'm', 'decided', 'frozen positions repeat exactly; real motion at 0.5 m/s moves 1.5 m in 3 s'),
   linkDownAfter: p(5_000, 'ms', 'decided', '2.5 heartbeat intervals'),
+
+  // Ingest: ordering, time and field repair (owned by the ingest task)
+  reorderWindow: p(50, 'count', 'decided', 'deepest reordering in any fixture is 6 seqs; 50 is 10 s at 5 Hz. A larger seq drop with the device clock moving forward is a controller restart'),
+  serverTimeSamples: p(8, 'count', 'decided', 'server-time offset is the max over the last 8 samples (16 s of heartbeats): delay only makes a sample low'),
+  telemetryLatencyAllowance: p(1_500, 'ms', 'measured', 'a truck\'s t_device - rx spread is up to 1.25 s within one fixture (seq-reset fixture: 1.07 to 2.32 s), so a message may describe the truck that much earlier than it arrived'),
+  deviceSkewFlagAbove: p(10_000, 'ms', 'decided', 'every truck in every fixture is within 3 s of arrival time except the skewed one, at about +58 min'),
+  offsetTolerance: p(0.5, 'm', 'decided', 'offset_m may sit this far past its segment ends before the position is treated as unknown; no fixture goes past at all'),
+  fractionalSocJump: p(2, '%', 'decided', 'healthy drain is under 0.1 % per message even for the weak pack; a drop of more than 2 points into the 0-1 range is a fraction, not a drain'),
+
+  // Battery (owned by the ingest task)
+  drainWindow: p(500, 'm', 'decided', 'drain rate is measured over the last 500 m travelled in each load state'),
+  drainMinEvidence: p(60, 'm', 'decided', 'about 20 s at 3 m/s; at 0.01 % SoC resolution a healthy 0.36 % over 60 m reads within 3 %. The fleet median needs 3 other trucks with this much too: weak-pack replay flags the weak truck 34 s in (64 s at 100 m)'),
+  drainMaxGap: p(10_000, 'ms', 'decided', 'over a longer gap the path travelled is not known; the interval is skipped'),
+  drainRatioFlag: p(2, 'ratio', 'decided', 'healthy trucks are within 1 % of the fleet median (6.0 %/km empty, 9.0 loaded, weak-pack fixture); the weak pack is 5x'),
+  fleetMinTrucks: p(3, 'count', 'decided', 'a fleet median needs at least 3 other trucks with enough evidence'),
+  loadedDrainFactor: p(1.5, 'ratio', 'measured', 'fleet median 9.0 %/km loaded against 6.0 empty (weak-pack fixture); used only until the fleet itself gives a ratio'),
+  batteryReserveFactor: p(1.25, 'ratio', 'decided', 'warn when charge is below 1.25x the estimated need, so the warning comes while there is still time to act'),
 
   // Blast safety and operator attention
   cantClearAlarmWithin: p(10_000, 'ms', 'decided', 'CLAUDE.md invariant 5; TESTING.md L4.R1'),
