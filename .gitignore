@@ -1,0 +1,16 @@
+# macOS / exFAT
+._*
+.DS_Store
+
+# secrets — the repo goes public
+.env
+.env.*
+!.env.example
+
+# build and dependencies
+node_modules/
+dist/
+*.tsbuildinfo
+
+# the original download; the unpacked files are committed instead
+*.zip
