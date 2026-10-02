@@ -55,7 +55,7 @@ export const PARAMS = {
 
   // Battery (owned by the ingest task)
   drainWindow: p(500, 'm', 'decided', 'drain rate is measured over the last 500 m travelled in each load state'),
-  drainMinEvidence: p(100, 'm', 'decided', '100 m is about 35 s at 3 m/s, so a weak pack is flagged within its first minute'),
+  drainMinEvidence: p(60, 'm', 'decided', 'about 20 s at 3 m/s; at 0.01 % SoC resolution a healthy 0.36 % over 60 m reads within 3 %. The fleet median needs 3 other trucks with this much too: weak-pack replay flags the weak truck 34 s in (64 s at 100 m)'),
   drainMaxGap: p(10_000, 'ms', 'decided', 'over a longer gap the path travelled is not known; the interval is skipped'),
   drainRatioFlag: p(2, 'ratio', 'decided', 'healthy trucks are within 1 % of the fleet median (6.0 %/km empty, 9.0 loaded, weak-pack fixture); the weak pack is 5x'),
   fleetMinTrucks: p(3, 'count', 'decided', 'a fleet median needs at least 3 other trucks with enough evidence'),
