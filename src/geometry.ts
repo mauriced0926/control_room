@@ -7,6 +7,7 @@ import type { Direction } from './protocol.ts';
 import type { Range, Site } from './site.ts';
 
 export function normalise(loopM: number, p: number): number {
+  if (p >= 0 && p < loopM) return p;
   const r = ((p % loopM) + loopM) % loopM;
   return r === loopM ? 0 : r;
 }
