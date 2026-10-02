@@ -80,10 +80,23 @@ counts some messages twice. The table above uses the stricter count.
 | EXIT_ZONE reverse speed, empty: 3.0 m/s; stops ~2 m outside the zone | Verified (S3) |
 | EXIT_ZONE reverse speed, loaded: 2.0 m/s | **Assumed** from the spec's autonomous speeds; not measured |
 | Commands queued behind LOADING / DUMPING / CHARGING; newer queued command replaces older | **Unverified**: S2 never ran (DRAW_12 was under a blast). To test in the fake gateway and re-probe |
-| Deadman ~0.4 s after TAKE_CONTROL with no input; lease expiry 10 s → HOLDING | Verified (S4) |
+| Deadman after TAKE_CONTROL with no input; lease expiry 10 s → HOLDING | Verified (S4). The "~0.4 s" was measured on the probe's receive times, which can lag (the fake-gateway work saw a GRANTED logged 142 ms late), so it may understate; the spec's 500 ms is the safer figure |
 | Drive at 10 Hz: send gaps 100–106 ms, deadman never tripped, applied seq advanced every telemetry sample; echo age 200–620 ms is round trip plus up to 200 ms telemetry sampling | Verified for ~4 s of driving in one session; arrival gaps at the truck are not observable |
 | Frozen telemetry is told apart from a stopped truck by motion that contradicts position, not by the device clock (which keeps ticking) | Verified across 4 frozen episodes |
-| A truck that freezes while stationary (e.g. HOLDING) | **Not detectable** from telemetry alone; only by a command response that contradicts it (S9: RESUME → `INVALID_STATE`) |
+| A truck that freezes while stationary (e.g. HOLDING) | **Not detectable** from telemetry alone; only by a command response that contradicts it |
+| S9's `RESUME` → `INVALID_STATE` on the frozen truck, 40 s after its `EXIT_ZONE` was accepted | Consistent with `PROTOCOL.md` §5 if the truck was still carrying out the `EXIT_ZONE`: `RESUME` is only accepted from `HOLDING`/`IDLE` or to cancel a queued command. So a `RESUME` cannot stop an `EXIT_ZONE` in progress; `HOLD` first |
 
 The S1 printout during the live probe was wrong (it miscounted acks for a resent id); the
 raw log was right. `probe.py` here has the fix. See `AI_LOG.md`, entry 1.
+
+## Open in the spec
+
+Questions `PROTOCOL.md` leaves open, found while building the fake gateway. The fake picks an answer
+for each (marked "guessed" in `fake/behaviour.ts`); none has been checked live.
+
+- A drive message with a stale `seq`: §6.2 says it is discarded, yet `BAD_SEQ` exists. Which applies?
+- Whether `CLEAR_ESTOP` takes effect at once, like `ESTOP`, or after the 1–6 s supervisory delay.
+- Whether a loaded truck sent `RETURN_TO_BAY` dumps first.
+- Which faults allow limp-home driving, beyond `HYD_PRESSURE_LOW` (yes) and `BATTERY_DEPLETED` (no).
+- The charge rate: no `CHARGING` was ever captured. The fake uses 0.1 %/s, from Sam's "ten-minute charge".
+- One live dump lasted 4.4 s (HT-10, run 3) against the spec's "about 12 s".
