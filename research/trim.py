@@ -58,6 +58,12 @@ cases = [
      [(probe, 160, 222, lambda r: about(r, 'HT-05') or (is_type(r, 'telemetry') and r['m'].get('zone_id') in ('BAY', 'DECLINE')))]),
     ('two-zones-closing', 'probe', 'hello with DRAW_12 and TIP both CLOSING at once, and the zone events that follow.',
      [(probe, 0, 210, lambda r: is_type(r, 'hello', 'zone_event'))]),
+    ('weak-pack', 'run3', 'HT-06 drains about 5x faster than the fleet (43.8 % at the start) and stops with '
+     'BATTERY_DEPLETED in the incline at about +508 s. Thinned to keep the file small: HT-06 at 1 Hz '
+     '(seq divisible by 5) plus every HT-06 message in FAULT, and every other truck at 0.2 Hz '
+     '(seq divisible by 25) as the fleet baseline.',
+     [(run3, 0, 540, lambda r: truck(r, 'HT-06') and (r['m'].get('seq', 1) % 5 == 0 or r['m'].get('state') == 'FAULT')),
+      (run3, 0, 540, lambda r: is_type(r, 'telemetry') and r['m'].get('vehicle_id') != 'HT-06' and r['m'].get('seq', 1) % 25 == 0)]),
     ('link-drop-in-notice', 'run2', 'DRAW_12 goes CLOSING; 1 s later the link drops for 45 s (logins accepted then closed); '
      'the hello on reconnect still shows DRAW_12 CLOSING with its effective time.',
      [(run2, 370, 420, link)]),

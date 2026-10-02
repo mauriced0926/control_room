@@ -45,6 +45,30 @@ replaced in everything written. Python 3.7+, standard library only.
 | `reverse-exit-zone` | EXIT_ZONE reverses an empty truck at 3.0 m/s up DECLINE into BAY, toward the trucks behind it. |
 | `two-zones-closing` | DRAW_12 and TIP `CLOSING` at the same time. |
 | `link-drop-in-notice` | Link drops 1 s after a `CLOSING` and stays down 45 s; the `hello` on reconnect still carries the zone state. |
+| `weak-pack` | A truck drains about 5× faster than the fleet and stops with `BATTERY_DEPLETED` in the incline, 508 s in. Thinned: the weak truck at 1 Hz plus its `FAULT` messages, every other truck at 0.2 Hz as the fleet baseline. |
+
+## Radio and blast statistics
+
+Measured from the three passive captures (6, 15 and 15 minutes). These are the ranges the fake
+gateway must reproduce (`TESTING.md` L0.C3).
+
+| Statistic | Run 1 | Run 2 | Run 3 | How it was counted |
+|---|---|---|---|---|
+| Telemetry received per truck | 4.80 Hz | 4.44 Hz | 4.60 Hz | Messages over time span; trucks send ~5 Hz, the rest is loss and outages |
+| Duplicates | 2.09 % | 1.97 % | 1.97 % | Same `seq` already seen in that controller run |
+| Reordered | 4.96 % | 5.09 % | 4.89 % | Arrived with a `seq` below the highest already seen |
+| Lost | 3.38 % | 2.68 % | 2.51 % | `seq`s never received, excluding those sent during whole-link outages |
+| Truncated lines | 0.19 % | 0.21 % | 0.18 % | Unparseable lines over all lines |
+| Notice (`CLOSING` → `effective_at`) | 120 s | 120 s | 120 s | Every closure |
+| Closed for | 102 s | 103, 111 s | 74, 66 s | `CLOSED` → `OPEN` |
+| Between `CLOSING`s | 280 s | 312, 318 s | 276, 302 s | |
+| Cancelled blasts | 0 | 1 | 1 | |
+| Link drops | none | 46, 22 s | 49 s, plus one still down when the capture ended | Gaps between heartbeats over 3 s |
+| Normal gap between one truck's messages | max 0.99 s | max 1.36 s | max 1.67 s | Excluding silent trucks and outages |
+
+Earlier summaries quoted reordering as "~6 %". That came from `report.py`, which counts a message as
+reordered when its `seq` is below the *previous* message's rather than the highest seen, and so
+counts some messages twice. The table above uses the stricter count.
 
 ## Verified, and not
 
