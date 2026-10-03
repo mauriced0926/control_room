@@ -278,7 +278,7 @@ test('notices go only to the people named: a LEASE_HELD refusal reaches the hold
     p.say({ type: 'command', action: 'HOLD', vehicleId: 'HT-04' });
     h.r.advance(3_000);
     h.hub.tick();
-    const notices = (s: FakeSocket) => s.frames().at(-1)!.notices.map((n: any) => n.message as string);
+    const notices = (s: FakeSocket): string[] => s.frames().at(-1)!.notices.map((n: any) => n.message as string);
     assert.ok(notices(m.sock).some((x) => /priya tried to HOLD HT-04, but marta holds its controls/.test(x)), 'the holder hears');
     assert.ok(notices(p.sock).some((x) => /priya tried to HOLD HT-04, but marta holds its controls/.test(x)), 'the sender hears');
     assert.deepEqual(notices(d.sock), [], 'nobody else');
