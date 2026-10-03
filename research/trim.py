@@ -1,7 +1,7 @@
 """Cut the failure-case fixtures in research/fixtures/ out of full captures.
 
 Usage:
-  python3 research/trim.py RUN2.jsonl RUN3.jsonl PROBE.jsonl OUTDIR
+  python3 research/trim.py RUN2.jsonl RUN3.jsonl PROBE.jsonl OUTDIR [REPROBE.jsonl]
 
 The full captures are 9–25 MB each and are not committed. Each fixture keeps the capture's
 record format (kind, rx_ms, m | raw) and starts with one {"kind": "fixture"} line saying what
@@ -11,6 +11,7 @@ hello.site.name is redacted, and the probe's own printouts ("note" records) are 
 import json, os, sys
 
 run2, run3, probe, outdir = [[json.loads(l) for l in open(f)] for f in sys.argv[1:4]] + [sys.argv[4]]
+reprobe = [json.loads(l) for l in open(sys.argv[5])] if len(sys.argv) > 5 else None
 
 def clean(r):
     r = json.loads(json.dumps(r))
@@ -68,6 +69,22 @@ cases = [
      'the hello on reconnect still shows DRAW_12 CLOSING with its effective time.',
      [(run2, 370, 420, link)]),
 ]
+
+if reprobe:
+    cases += [
+        ('queued-hold-dropped', 'reprobe', 'Q1: HOLD sent to HT-06 0.2 s into loading is ACCEPTED, but when loading ends 20 s later '
+         'the truck drives on into the next zone and never holds. One sample: a dropped queued command, or the '
+         'accepted-then-ignored fault landing on a queued one.',
+         [(reprobe, 14, 60, lambda r: truck(r, 'HT-06') or about(r, 'HT-06'))]),
+        ('resume-during-pending-hold', 'reprobe', 'Q3: HOLD to HT-08 in the last second of loading; a RESUME 1 s later is '
+         'REJECTED INVALID_STATE, and the HOLD still takes effect ~5.6 s after it was sent. Then a cleanup RESUME gets '
+         'no ack and no effect; a second one, under a new command_id, works.',
+         [(reprobe, 255, 320, lambda r: truck(r, 'HT-08') or about(r, 'HT-08'))]),
+        ('loaded-reverse-into-silence', 'reprobe', 'R1: EXIT_ZONE on loaded HT-04, 47 m into L4_SOUTH. It reverses at 2.0 m/s '
+         '(1.99 by its own clock, over 2.4 m), then goes silent for 41 s and reappears HOLDING 2 m outside the zone, '
+         '53.8 m back.',
+         [(reprobe, 310, 380, lambda r: truck(r, 'HT-04') or about(r, 'HT-04') or is_type(r, 'heartbeat'))]),
+    ]
 
 os.makedirs(outdir, exist_ok=True)
 for name, source, what, parts in cases:

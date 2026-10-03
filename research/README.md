@@ -16,13 +16,17 @@ probe, on 2026-10-01 and 2026-10-02.
 > of deliberately malformed commands. Cleanup resumed every truck it touched except HT-10, whose
 > real state could not be observed (see `frozen-truck`); it was left for the simulator's
 > daily reset.
+>
+> **A second probe sent real commands on 2026-10-03, 10:39:53–10:46:02 EDT** (steps Q1–Q3 and R1, below),
+> also under `operator_id: "probe"`: four HOLD/RESUME/EXIT_ZONE pairs and their cleanup, only while the
+> zones involved were `OPEN`. Every truck it touched was confirmed moving again in telemetry.
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `capture.py` | Passive recorder. Authenticates and writes every line; sends nothing else. |
-| `probe.py` | The command probe (steps S1–S9). Dry run by default; `--live` sends. |
+| `probe.py` | The command probe: steps S1–S9 by default; the re-probe's Q1–Q3 and R1 with `--steps=Q1,Q2,Q3,R1`. Dry run by default; `--live` sends. |
 | `report.py` | Per-run report over a capture: link drops, blast timeline, per-truck faults. |
 | `trim.py` | Cuts the fixtures below out of the full captures (9–25 MB each; not committed). |
 | `fixtures/*.jsonl` | One failure case per file. First line says what it shows and which run it came from. |
@@ -46,6 +50,9 @@ replaced in everything written. Python 3.7+, standard library only.
 | `two-zones-closing` | DRAW_12 and TIP `CLOSING` at the same time. |
 | `link-drop-in-notice` | Link drops 1 s after a `CLOSING` and stays down 45 s; the `hello` on reconnect still carries the zone state. |
 | `weak-pack` | A truck drains about 5× faster than the fleet and stops with `BATTERY_DEPLETED` in the incline, 508 s in. Thinned: the weak truck at 1 Hz plus its `FAULT` messages, every other truck at 0.2 Hz as the fleet baseline. |
+| `queued-hold-dropped` | Re-probe Q1: a `HOLD` sent 0.2 s into loading is `ACCEPTED`, but after loading the truck drives straight into the next zone and never holds. |
+| `resume-during-pending-hold` | Re-probe Q3: a `RESUME` sent while a `HOLD` is within its 1–6 s delay is `REJECTED INVALID_STATE`, and the `HOLD` still takes effect; then a `RESUME` with no ack and no effect, and a retry that works. |
+| `loaded-reverse-into-silence` | Re-probe R1: a loaded truck reverses at 2.0 m/s, goes silent for 41 s, and reappears holding 2 m outside the zone. |
 
 ## Radio and blast statistics
 
@@ -78,8 +85,12 @@ counts some messages twice. The table above uses the stricter count.
 | Same `command_id` with a different payload → `COMMAND_ID_REUSED` | Verified (S1) |
 | `ACCEPTED` does not guarantee execution | Verified once (S4 RESUME) |
 | EXIT_ZONE reverse speed, empty: 3.0 m/s; stops ~2 m outside the zone | Verified (S3) |
-| EXIT_ZONE reverse speed, loaded: 2.0 m/s | **Assumed** from the spec's autonomous speeds; not measured |
-| Commands queued behind LOADING / DUMPING / CHARGING; newer queued command replaces older | **Unverified**: S2 never ran (DRAW_12 was under a blast). To test in the fake gateway and re-probe |
+| EXIT_ZONE reverse speed, loaded: 2.0 m/s | **Measured, thinly** (re-probe R1): 1.99 m/s by the truck's own clock over 2.4 m, after which it went silent; the rest of the 56 m was covered in a 41 s gap, which needs at least 1.31 m/s. Consistent with 2.0; keep testing 1.5 as the pessimistic case |
+| A `HOLD` queued behind LOADING is carried out when loading ends | **Not seen.** Re-probe Q1: `ACCEPTED`, then dropped; the truck drove on into the next zone. One sample, so it may be the accepted-then-ignored fault landing on a queued command. Treat queued commands as unreliable: confirm, and retry when the work ends |
+| `RESUME` cancels a queued command | **Untested.** Q3's truck finished loading before the `RESUME` arrived, so nothing was queued |
+| `RESUME` while a supervisory command is within its 1–6 s delay | **Seen once** (Q3): `REJECTED INVALID_STATE`, and the pending `HOLD` still took effect ~5.6 s after it was sent. A command on its way can't be called back |
+| A newer queued command replaces an older one | **Untested.** Q2 never ran: L4_SOUTH was closed for its whole 180 s window |
+| Accepted-then-ignored | **Seen again** in the re-probe's cleanup: a `RESUME` with no ack and no effect; a retry under a new `command_id` worked |
 | Deadman after TAKE_CONTROL with no input; lease expiry 10 s → HOLDING | Verified (S4). The "~0.4 s" was measured on the probe's receive times, which can lag (the fake-gateway work saw a GRANTED logged 142 ms late), so it may understate; the spec's 500 ms is the safer figure |
 | Drive at 10 Hz: send gaps 100–106 ms, deadman never tripped, applied seq advanced every telemetry sample; echo age 200–620 ms is round trip plus up to 200 ms telemetry sampling | Verified for ~4 s of driving in one session; arrival gaps at the truck are not observable |
 | Frozen telemetry is told apart from a stopped truck by motion that contradicts position, not by the device clock (which keeps ticking) | Verified across 4 frozen episodes |
@@ -100,3 +111,20 @@ for each (marked "guessed" in `fake/behaviour.ts`); none has been checked live.
 - Which faults allow limp-home driving, beyond `HYD_PRESSURE_LOW` (yes) and `BATTERY_DEPLETED` (no).
 - The charge rate: no `CHARGING` was ever captured. The fake uses 0.1 %/s, from Sam's "ten-minute charge".
 - One live dump lasted 4.4 s (HT-10, run 3) against the spec's "about 12 s".
+
+## Re-probe, 2026-10-03
+
+10:39:53–10:46:02 EDT, `research/probe.py --steps=Q1,Q2,Q3,R1`. The steps were first run against the
+fake gateway, to test the probe itself; the fake's answers are its guesses, not findings.
+
+| Step | Live result |
+|---|---|
+| Q1 `HOLD` to a truck 0.2 s into loading | `ACCEPTED`. Loading ended 20.0 s later; the truck drove on into L4_SOUTH and never held (`queued-hold-dropped`) |
+| Q2 `HOLD`, then `EXIT_ZONE`, to a loading truck | Did not run: L4_SOUTH, the zone after the draw point, was closing or closed for the whole 180 s window |
+| Q3 `HOLD`, then `RESUME`, to a loading truck | The only loading truck was 19.4 s into its load, so loading ended before the `RESUME` arrived. The `RESUME` was rejected `INVALID_STATE` and the `HOLD` took effect ~5.6 s after sending (`resume-during-pending-hold`) |
+| R1 `EXIT_ZONE` to a loaded truck 47 m into L4_SOUTH | Reversed at 2.0 m/s, then telemetry went silent for 41 s; reappeared holding at 838.0 m, 2 m outside (`loaded-reverse-into-silence`) |
+| Cleanup | All trucks confirmed moving; one `RESUME` needed a retry |
+
+What it means for the blast engine: a truck held at the draw point, next to a closing zone, can
+leave the moment loading ends, because its queued `HOLD` may never be carried out; and a command
+already sent can't be cancelled.

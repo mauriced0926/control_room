@@ -22,6 +22,7 @@ import json, os, socket, ssl, sys, threading, time, uuid
 OPERATOR = 'probe'
 RUN = uuid.uuid4().hex[:6]
 LIVE = '--live' in sys.argv
+STEPS = next((a.split('=', 1)[1].split(',') for a in sys.argv if a.startswith('--steps=')), None)
 
 PLAN = [
     ('S1 hold/resume', 'TRAMMING truck in a transit zone: HOLD, time ack and stop; resend the same command_id '
@@ -37,12 +38,22 @@ PLAN = [
     ('S8 faulted truck', 'If a truck is in FAULT: HOLD (expect INTERLOCK_ACTIVE). Nothing else.'),
     ('S9 frozen truck', 'Wait up to 240 s for a truck reporting speed > 0.5 with an unchanged position for 8 s; '
      'if found outside BAY, EXIT_ZONE it and record what telemetry and acks say for 40 s; RESUME.'),
+    # Re-probe of what S2 never measured, plus the loaded reverse speed. Run with --steps=Q1,Q2,Q3,R1.
+    ('Q1 hold behind loading', 'LOADING truck: HOLD; record when loading ends and when it is HOLDING. Then RESUME, confirmed in telemetry.'),
+    ('Q2 newer replaces older', 'LOADING truck: HOLD, then EXIT_ZONE; after loading, does it hold in place (HOLD kept) or '
+     'leave the zone and hold ~2 m outside (EXIT_ZONE replaced it)? Then RESUME, confirmed.'),
+    ('Q3 resume cancels queue', 'LOADING truck: HOLD, then RESUME; after loading, does it drive on (queue cancelled) or hold? '
+     'RESUME again if it holds, confirmed.'),
+    ('R1 loaded reverse', 'Loaded TRAMMING truck nearer its zone\'s start than its end: EXIT_ZONE; measure reverse speed and '
+     'stop point. Then RESUME, confirmed.'),
 ]
+DEFAULT_STEPS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9']
+SELECTED = [p for p in PLAN if p[0].split()[0] in (STEPS or DEFAULT_STEPS)]
 
 if not LIVE:
     print('DRY RUN: nothing will be sent. Pass --live to run.\n')
     print('operator_id = %r, command_id = "probe-<run>-<n>"\n' % OPERATOR)
-    for name, what in PLAN: print('%-18s %s' % (name, what))
+    for name, what in SELECTED: print('%-26s %s' % (name, what))
     print('\nExample messages:')
     for ex in ({'type': 'command', 'command_id': 'probe-%s-1' % RUN, 'vehicle_id': 'HT-xx', 'action': 'HOLD', 'operator_id': OPERATOR},
                {'type': 'command', 'command_id': 'probe-%s-9' % RUN, 'vehicle_id': 'HT-xx', 'action': 'TAKE_CONTROL', 'operator_id': OPERATOR},
@@ -50,6 +61,8 @@ if not LIVE:
         print(' ', json.dumps(ex))
     print('\nCleanup on exit (always): RELEASE_CONTROL held leases, CLEAR_ESTOP, RESUME every truck touched,')
     print('except no RESUME while the truck\'s zone or the next zone ahead is not OPEN (left held and listed).')
+    print('Every RESUME is confirmed in telemetry (truck seen moving or back in its duty cycle); one retry')
+    print('under a new command_id if not, and anything still unconfirmed is listed at the end.')
     sys.exit(0)
 
 HOST, PORT, EMAIL = os.environ['GATEWAY_HOST'], int(os.environ['GATEWAY_PORT']), os.environ['GATEWAY_EMAIL']
@@ -72,6 +85,9 @@ sent_at = {}       # command_id -> time of the latest send
 leases = {}        # vehicle -> lease_id we hold
 events = []        # lease_event / drive_rejected
 route_start = {}
+route_kind = {}    # segment_id -> kind, from hello
+route_seg_zone = {}
+loading_since = {} # vehicle -> local time it was first seen LOADING in this stretch
 zone_order = []    # zones in loop order, from hello.route
 left_held = []
 conn = {'sock': None, 'up': threading.Event()}
@@ -110,6 +126,8 @@ def handle(m, s):
     with lock:
         if t == 'hello':
             route_start.update({x['segment_id']: x['start_m'] for x in m['route']})
+            route_kind.update({x['segment_id']: x['kind'] for x in m['route']})
+            route_seg_zone.update({x['segment_id']: x['zone_id'] for x in m['route']})
             zone_order[:] = [z for i, z in enumerate(x['zone_id'] for x in m['route']) if i == 0 or z != m['route'][i - 1]['zone_id']]
             zones.update({z['zone_id']: z['status'] for z in m['zones']})
             conn['sock'] = s; conn['up'].set()
@@ -117,7 +135,14 @@ def handle(m, s):
                 s.sendall((json.dumps(payload) + '\n').encode()); record('replayed', command_id=cid)
         elif t == 'zone_event': zones[m['zone_id']] = m['status']
         elif t == 'telemetry' and isinstance(m.get('vehicle_id'), str):
-            latest[m['vehicle_id']] = (now, m)
+            # Keep the newest by seq, not by arrival: ~5 % of messages arrive out of order. A large seq
+            # drop is a controller restart and is taken as new.
+            v, cur = m['vehicle_id'], latest.get(m['vehicle_id'])
+            sq, cq = m.get('seq'), cur[1].get('seq') if cur else None
+            if cur is None or not isinstance(sq, int) or not isinstance(cq, int) or sq > cq or sq < cq - 200:
+                latest[v] = (now, m)
+                if st(m) == 'LOADING': loading_since.setdefault(v, now)
+                else: loading_since.pop(v, None)
             history.setdefault(m['vehicle_id'], []).append((now, pos(m), num(m.get('speed_mps'))))
             history[m['vehicle_id']] = history[m['vehicle_id']][-80:]
         elif t == 'command_ack':
@@ -172,6 +197,9 @@ def summary(m):
     if not m: return None
     return dict(state=m.get('state'), task=m.get('task'), speed=m.get('speed_mps'), dir=m.get('direction'),
                 zone=m.get('zone_id'), pos=pos(m), ctrl=m.get('control'), faults=m.get('faults'))
+
+def st(m):
+    return str(m.get('state')).upper()
 
 def sane(m):
     return all(num(m.get(f)) is not None for f in ('offset_m', 'speed_mps', 'soc_pct')) and m.get('segment_id') in route_start
@@ -306,22 +334,133 @@ def s9():
         time.sleep(0.5)
     command(v, 'RESUME')
 
+# ---- re-probe: queuing and loaded reverse ----
+
+def load_zones():
+    return {route_seg_zone[s] for s, k in route_kind.items() if k == 'load'}
+
+def zone_after(z):
+    return zone_order[(zone_order.index(z) + 1) % len(zone_order)] if z in zone_order else None
+
+def zone_before(z):
+    return zone_order[(zone_order.index(z) - 1) % len(zone_order)] if z in zone_order else None
+
+def load_area_open():
+    zs = load_zones()
+    return bool(zs) and all(zones.get(z) == 'OPEN' and zones.get(zone_after(z)) == 'OPEN' for z in zs)
+
+def pick_loading(timeout=180):
+    end = time.time() + timeout
+    while time.time() < end:
+        if load_area_open():
+            with lock:
+                c = [(v, m) for v, (rx, m) in latest.items() if time.time() * 1000 - rx < 1500 and st(m) == 'LOADING'
+                     and sane(m) and not m.get('faults') and v not in touched and m.get('zone_id') in load_zones()]
+            # Prefer one that only just started, so the queued command waits for most of a load.
+            c.sort(key=lambda vm: -loading_since.get(vm[0], 0))
+            if c: return c[0][0]
+        time.sleep(0.25)
+    return None
+
+def watch(v, seconds, label):
+    """Record every change of state, task, direction or zone for `seconds`; stop early if the load area closes."""
+    t0 = time.time(); last = None; trace = []
+    while time.time() - t0 < seconds:
+        if not load_area_open() and label.startswith('Q'):
+            say(label, 'load area no longer OPEN: stopping the watch'); break
+        with lock: m = latest[v][1]
+        k = (st(m), m.get('task'), m.get('direction'), m.get('zone_id'))
+        if k != last:
+            trace.append((round(time.time() - t0, 2), k, pos(m))); say('%s %+.2fs' % (label, time.time() - t0), summary(m)); last = k
+        time.sleep(0.1)
+    return trace
+
+def resume_confirmed(v, label):
+    """RESUME, then require telemetry to show the truck moving or back in its duty cycle. One retry under a
+    new command_id (an ACCEPTED RESUME has been ignored live); anything still unconfirmed is listed."""
+    for attempt in (1, 2):
+        cid, t0 = command(v, 'RESUME')
+        if cid is None: return False
+        a = wait_ack(cid); say(label, 'resume ack', a or 'none received')
+        if a and a.get('status') == 'REJECTED' and a.get('reason') == 'INVALID_STATE' and st(latest[v][1]) not in ('HOLDING', 'IDLE'):
+            say(label, v, 'not holding, so nothing to resume:', summary(latest[v][1])); return True
+        dt, m = wait_for(v, lambda m: (st(m) == 'TRAMMING' and (num(m.get('speed_mps')) or 0) > 0.5) or st(m) in ('LOADING', 'DUMPING', 'CHARGING'), 15)
+        if dt is not None:
+            say(label, v, 'confirmed moving %.1fs after RESUME (attempt %d)' % (time.time() - t0, attempt)); return True
+        say(label, v, 'RESUME not confirmed (attempt %d):' % attempt, summary(m))
+    unconfirmed.append(v); return False
+
+def queue_step(label, second=None):
+    v = pick_loading()
+    if not v: return say(label, 'no LOADING truck with the load area OPEN within 180 s')
+    loading_for = time.time() - loading_since.get(v, time.time() * 1000) / 1000
+    z = latest[v][1].get('zone_id'); say(label, 'truck', v, 'loading for ~%.1fs' % loading_for, summary(latest[v][1]))
+    cid, t0 = command(v, 'HOLD'); say(label, 'HOLD ack', wait_ack(cid))
+    if second:
+        cid2, _ = command(v, second); say(label, second, 'ack', wait_ack(cid2))
+    dt, m = wait_for(v, lambda m: st(m) != 'LOADING', 45)
+    say(label, 'loading ended %s after HOLD was sent' % ('%.1fs' % (time.time() - t0) if dt is not None else 'NOT within 45 s'), summary(m))
+    trace = watch(v, 25, label)
+    final = latest[v][1]
+    say(label, 'RESULT', {'truck': v, 'load_zone': z, 'final_state': st(final), 'final_zone': final.get('zone_id'),
+                          'final_pos': pos(final), 'trace': trace})
+    resume_confirmed(v, label)
+
+def q1(): queue_step('Q1')
+def q2(): queue_step('Q2', 'EXIT_ZONE')
+def q3(): queue_step('Q3', 'RESUME')
+
+def r1():
+    end = time.time() + 240; v = None
+    while time.time() < end and not v:
+        with lock:
+            for cand, (rx, m) in sorted(latest.items()):
+                z = m.get('zone_id')
+                if cand in touched or st(m) != 'TRAMMING' or not sane(m) or m.get('faults') or (num(m.get('payload_kg')) or 0) <= 0: continue
+                if route_kind.get(m.get('segment_id')) != 'transit' or zones.get(z) != 'OPEN' or zones.get(zone_before(z)) != 'OPEN': continue
+                segs = [s for s, zz in route_seg_zone.items() if zz == z]
+                start = min(route_start[s] for s in segs); p = pos(m)
+                if p is None: continue
+                if 40 < p - start < 120: v = cand; break
+        if not v: time.sleep(0.5)
+    if not v: return say('R1 no loaded truck 40-120 m into an OPEN transit zone within 240 s')
+    say('R1 truck', v, summary(latest[v][1]))
+    cid, t0 = command(v, 'EXIT_ZONE'); say('R1 ack', wait_ack(cid))
+    samples = []
+    while time.time() - t0 < 90:
+        with lock: rx, m = latest[v]
+        if m.get('direction') == 'REV' and st(m) == 'TRAMMING' and (num(m.get('speed_mps')) or 0) > 0: samples.append((rx, pos(m), m.get('seq'), num(m.get('speed_mps'))))
+        if st(m) == 'HOLDING' and samples: break
+        time.sleep(0.1)
+    if len(samples) > 10:
+        (ra, pa, _, _), (rb, pb, _, _) = samples[0], samples[-1]
+        say('R1 RESULT', {'truck': v, 'reversed_m': round(pa - pb, 2), 'seconds': round((rb - ra) / 1000, 2),
+                          'reverse_mps': round((pa - pb) / ((rb - ra) / 1000), 3), 'reported_speeds': sorted({x[3] for x in samples}),
+                          'stopped_at': summary(latest[v][1])})
+    else:
+        say('R1 RESULT: not enough reversing telemetry', len(samples), summary(latest[v][1]))
+    resume_confirmed(v, 'R1')
+
+unconfirmed = []
+
 def cleanup():
     say('== cleanup', sorted(touched))
     for v in sorted(touched):
         if v not in latest: continue
         if v in leases: command(v, 'RELEASE_CONTROL', lease_id=leases[v]); time.sleep(0.5)
-        if latest[v][1].get('state') == 'ESTOPPED': command(v, 'CLEAR_ESTOP'); time.sleep(1)
-        if latest[v][1].get('state') in ('HOLDING', 'IDLE') or latest[v][1].get('task'): command(v, 'RESUME')
+        if st(latest[v][1]) == 'ESTOPPED': command(v, 'CLEAR_ESTOP'); time.sleep(1)
+        if st(latest[v][1]) in ('HOLDING', 'IDLE') or latest[v][1].get('task'): resume_confirmed(v, 'cleanup')
     time.sleep(5)
     if left_held: say('LEFT HELD (zone not OPEN; resume by hand after it reopens):', sorted(set(left_held)))
+    if unconfirmed: say('RESUME NOT CONFIRMED IN TELEMETRY:', sorted(set(unconfirmed)))
     say('final states', {v: summary(latest[v][1])['state'] for v in sorted(touched) if v in latest})
 
 threading.Thread(target=reader, daemon=True).start()
 if not conn['up'].wait(60): sys.exit('no hello within 60 s')
 time.sleep(5)  # let telemetry populate
 try:
-    for name, fn in zip([p[0] for p in PLAN], (s1, s2, s3, s4, s5, s6, s7, s8, s9)): step(name, fn)
+    fns = dict(S1=s1, S2=s2, S3=s3, S4=s4, S5=s5, S6=s6, S7=s7, S8=s8, S9=s9, Q1=q1, Q2=q2, Q3=q3, R1=r1)
+    for name, _ in SELECTED: step(name, fns[name.split()[0]])
 except KeyboardInterrupt:
     say('interrupted')
 finally:
