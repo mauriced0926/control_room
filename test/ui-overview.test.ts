@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { clearanceRows, fleetRows, serviceLink, siteLink, TIERS } from '../src/ui/overview.ts';
-import { age, countdown } from '../src/words.ts';
+import { age, countdown, elapsed } from '../src/words.ts';
 import { PARAMS } from '../src/params.ts';
 import type { FleetSnapshot } from '../src/fleet.ts';
 import { fixture } from './helpers/fixtures.ts';
@@ -20,6 +20,8 @@ test('words: ages count whole seconds up, countdowns round up and never show 0:0
   assert.equal(countdown(83_001), '1:24');
   assert.equal(countdown(1), '0:01');
   assert.equal(countdown(0), '0:00');
+  assert.equal(elapsed(3_900), '0:03', 'time since rounds down, like an age');
+  assert.equal(elapsed(65_000), '1:05');
 });
 
 test('two-zones-closing: one row per closing zone, each with its own countdown; UNSURE while nothing has reported', () => {
@@ -46,7 +48,7 @@ test('two-zones-closing: a CLOSED zone says how long ago it closed', () => {
   clock.advance(65_000);
   const tip = clearanceRows(fleet.snapshot()).find((r) => r.zoneId === 'TIP')!;
   assert.equal(tip.status, 'CLOSED');
-  assert.match(tip.when, /^closed 1:0[56] ago$/);
+  assert.match(tip.when, /^closed 1:0[45] ago$/);
 });
 
 test('link-drop-in-notice: the site link reads DOWN with a growing age; a recording with no heartbeats says so instead', () => {

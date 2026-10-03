@@ -8,7 +8,7 @@
 // to scale.
 import type { FleetSnapshot, TruckView, ZoneView } from '../fleet.ts';
 import type { Range, Site } from '../site.ts';
-import { age, countdown, dataState, positionAgeMs } from '../words.ts';
+import { age, countdown, dataState, elapsed, positionAgeMs } from '../words.ts';
 
 // The site as the browser receives it: plain data, no methods.
 export interface SiteData {
@@ -196,7 +196,7 @@ export function zoneStatusWords(z: ZoneView | undefined): { kind: BandKind; stat
     case 'CLOSING': {
       const left = z!.msUntilEffective;
       if (left === null) return w('closing', 'CLOSING');
-      if (left < 0) return w('closing', 'CLOSING', `due ${countdown(-left)} ago`);
+      if (left < 0) return w('closing', 'CLOSING', `due ${elapsed(-left)} ago`);
       return w('closing', 'CLOSING', countdown(left));
     }
     default: return w('unknown', 'status unknown');

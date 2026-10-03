@@ -17,6 +17,12 @@ export function countdown(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// Time since something, as m:ss. Rounded down, like age: "closed 0:03 ago" at 3.9 s.
+export function elapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 // How old the truck's position is: since the last valid position, or since the last message if it
 // never sent one.
 export function positionAgeMs(t: TruckView): number | null {

@@ -3,7 +3,7 @@
 // draws it.
 import { zoneClearance, type Verdict } from '../clearance.ts';
 import type { FleetSnapshot, TruckView, ZoneView } from '../fleet.ts';
-import { age, countdown, dataState, faultWords } from '../words.ts';
+import { age, countdown, dataState, elapsed, faultWords } from '../words.ts';
 
 // ---- zone clearance panel ----
 
@@ -23,9 +23,9 @@ export function zoneWhen(z: ZoneView): string {
   const left = z.msUntilEffective;
   if (z.status === 'CLOSING') {
     if (left === null) return 'closing, time not given';
-    return left >= 0 ? `closes in ${countdown(left)}` : `was due to close ${countdown(-left)} ago: treat as closed`;
+    return left >= 0 ? `closes in ${countdown(left)}` : `was due to close ${elapsed(-left)} ago: treat as closed`;
   }
-  if (z.status === 'CLOSED') return left !== null && left <= 0 ? `closed ${countdown(-left)} ago` : 'closed';
+  if (z.status === 'CLOSED') return left !== null && left <= 0 ? `closed ${elapsed(-left)} ago` : 'closed';
   if (z.status === null) return 'status unknown: treat as closed';
   return 'open';
 }
