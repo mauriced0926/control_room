@@ -6,8 +6,9 @@
 // them. It never reads the wall clock: one tick timer on the injected Clock drives everything, so
 // a ManualClock runs a day in milliseconds and the same seed and inputs replay byte for byte.
 //
-// What is sent is built from this truth. Milestone 2's fault injectors sit between the two
-// (telemetry faults) and between the gateway and each client (radio faults); the truth stays here.
+// What is sent is built from this truth. Telemetry faults (fake/faults.ts) shape each message on its
+// way out and radio faults (fake/radio.ts) sit between the gateway and its clients; the truth stays
+// here, and everything that was really wrong goes in the truth log.
 import type { Clock, TimerHandle } from '../src/clock.ts';
 import type {
   Action, CommandAck, GatewayMessage, Hello, LeaseEvent, RejectReason, RouteSegment, Task, Telemetry,
@@ -15,6 +16,7 @@ import type {
 } from '../src/protocol.ts';
 import { buildSite, type Segment, type Site, type Zone } from '../src/site.ts';
 import type { Behaviour } from './behaviour.ts';
+import { TruthLog, type TelemetryFaults } from './faults.ts';
 import { Rng } from './rng.ts';
 
 export interface SiteConfig {
@@ -51,6 +53,7 @@ export interface ModelOptions {
   behaviour: Behaviour;
   blasts: Blasts;
   trucks: TruckInit[];
+  log?: TruthLog;
 }
 
 export type AckResult = Pick<CommandAck, 'status' | 'reason' | 'holder' | 'lease_id' | 'lease_idle_timeout_ms' | 'deadman_ms'>;
@@ -62,6 +65,7 @@ export interface ModelCommand {
   operator_id: string;
   force?: unknown;
   lease_id?: unknown;
+  ignored?: boolean; // ACCEPTED-then-ignored injector: accept it, then never carry it out
 }
 
 type Supervisory = 'HOLD' | 'RESUME' | 'RETURN_TO_BAY' | 'EXIT_ZONE';
@@ -149,6 +153,10 @@ export class SiteModel {
   readonly #rngCommands: Rng;
   readonly #rngBlasts: Rng;
   readonly #rngLeases: Rng;
+  readonly #rngQueue: Rng;
+  readonly #log: TruthLog;
+  #telemetryFaults: TelemetryFaults | null = null;
+  #queuedDrops = false;
   readonly #randomBlasts: boolean;
   readonly #telemetryEvery: number;
   #blasts: Blast[] = [];
@@ -184,6 +192,8 @@ export class SiteModel {
     this.#rngCommands = root.fork('commands');
     this.#rngBlasts = root.fork('blasts');
     this.#rngLeases = root.fork('leases');
+    this.#rngQueue = new Rng(opts.seed).fork('queue-drops'); // its own root: the forks above keep their streams
+    this.#log = opts.log ?? new TruthLog();
 
     const given = new Map(opts.trucks.map((t) => [t.vehicle_id, t]));
     for (const id of given.keys()) if (!site.vehicles.includes(id)) throw new Error(`truck ${id} is not on the site's roster`);
@@ -212,6 +222,7 @@ export class SiteModel {
         if (!this.#zones.has(s.zoneId)) throw new Error(`blast zone ${s.zoneId} is not on the site`);
         const closingAt = this.startMs + s.atMs;
         const effectiveAt = closingAt + (s.noticeMs ?? this.#config.noticeMs);
+        this.#logBlast(s.zoneId, closingAt, s.cancelAfterMs !== undefined);
         this.#blasts.push({
           zoneId: s.zoneId, closingAt, effectiveAt, reopenAt: effectiveAt + s.closedForMs,
           cancelAt: s.cancelAfterMs === undefined ? null : closingAt + s.cancelAfterMs, stage: 'scheduled',
@@ -289,7 +300,10 @@ export class SiteModel {
   }
 
   #fault(t: Truck, code: string, now: number): void {
-    if (!t.faults.includes(code)) t.faults.push(code);
+    if (!t.faults.includes(code)) {
+      t.faults.push(code);
+      this.#log.event(now, t.id, 'fault', { code, positionM: t.pos, zoneId: this.site.zoneAt(t.pos)?.zoneId ?? null, state: t.state });
+    }
     if (t.state === 'ESTOPPED') return;
     if (t.lease) {
       if (this.#limpOk(t)) return; // §6.6: keeps driving, reports MANUAL with its faults
@@ -298,6 +312,56 @@ export class SiteModel {
     }
     this.#stopAll(t);
     t.state = 'FAULT';
+  }
+
+  // BATTERY_DEPLETED on its own: the pack is empty, the truck stops where it is.
+  deplete(id: string): void {
+    const t = this.#byId.get(id);
+    if (!t) throw new Error(`no truck ${id}`);
+    t.soc = 0;
+    this.#fault(t, this.#b.depletedFault, this.#clock.now());
+  }
+
+  // ---- milestone 2's hooks for the fault injectors ----
+
+  // The queued-command-dropped injector, in the spec version too.
+  setQueuedDrops(on: boolean): void {
+    this.#queuedDrops = on;
+  }
+
+  setTelemetryFaults(f: TelemetryFaults): void {
+    this.#telemetryFaults = f;
+  }
+
+  // The vehicle controller's clock error (clock skew injector; small offsets for every truck).
+  setDeviceOffset(id: string, ms: number): void {
+    const t = this.#byId.get(id);
+    if (!t) throw new Error(`no truck ${id}`);
+    t.deviceOffsetMs = ms;
+  }
+
+  // A weak pack: drains `factor` times faster, and starts with just enough charge to die loaded,
+  // `fraction` of the way from the load point to the dump point, as both live weak packs did (in the
+  // incline). Charging is ignored in the sum; a pack this weak is still above the charge threshold
+  // when it passes the bay. Returns where it should die.
+  weakPack(id: string, factor: number, fraction: number): { socPct: number; diesAtM: number } {
+    const t = this.#byId.get(id);
+    if (!t) throw new Error(`no truck ${id}`);
+    const load = this.#points.LOADING[0], dump = this.#points.DUMPING[0];
+    t.drainFactor = factor;
+    if (load === undefined || dump === undefined) return { socPct: t.soc, diesAtM: NaN };
+    const stretch = this.#mod(dump - load);
+    const target = this.#mod(load + fraction * stretch);
+    const empty = (m: number) => m * (this.#b.drainEmptyPctPerKm / 1000) * factor;
+    const loaded = (m: number) => m * (this.#b.drainLoadedPctPerKm / 1000) * factor;
+    const toLoad = this.#mod(load - t.pos), toTarget = this.#mod(target - t.pos), toDump = this.#mod(dump - t.pos);
+    let need: number;
+    if (!t.loaded) need = empty(toLoad) + loaded(fraction * stretch);
+    else if (toTarget <= toDump) need = loaded(toTarget);
+    else need = loaded(toDump) + empty(this.#mod(load - dump)) + loaded(fraction * stretch);
+    t.soc = Math.min(100, need);
+    this.#log.start(this.startMs, id, 'weak_pack', { factor, startSocPct: t.soc, diesAtM: target });
+    return { socPct: t.soc, diesAtM: target };
   }
 
   #limpOk(t: Truck): boolean {
@@ -330,14 +394,28 @@ export class SiteModel {
       default: break;
     }
     if (t.lease) return reject('LEASE_HELD', { holder: t.lease.operator });
-    return this.#supervisory(t, c.action, now);
+    return this.#supervisory(t, c.action, now, c.ignored === true ? c.command_id : null);
   }
 
-  #supervisory(t: Truck, action: Supervisory, now: number): AckResult {
+  // `ignoredId` set: the ACCEPTED-then-ignored injector. The command is accepted exactly as it would
+  // be, and then nothing happens (fixture accepted-then-ignored-resume).
+  #supervisory(t: Truck, action: Supervisory, now: number, ignoredId: string | null): AckResult {
+    const ignore = (): AckResult => {
+      this.#log.event(now, t.id, 'accepted_ignored', { command_id: ignoredId, action, state: t.state });
+      return ACCEPTED;
+    };
     if (action === 'RESUME') {
       // §5: RESUME cancels a queued command instead, at once (the controller has it in its queue).
-      if (t.queued) { t.queued = null; return ACCEPTED; }
-      if (t.state === 'HOLDING' || t.state === 'IDLE') { this.#schedule(t, { action, zoneId: null }, now); return ACCEPTED; }
+      // Guessed: untested live (re-probe Q3's truck had finished loading before the RESUME came).
+      if (t.queued) { if (ignoredId !== null) return ignore(); t.queued = null; return ACCEPTED; }
+      // Seen once live (re-probe Q3, fixture resume-during-pending-hold): a command still within its
+      // 1-6 s delay cannot be called back. RESUME is INVALID_STATE and the pending one takes effect.
+      if (t.pending.length > 0) return reject('INVALID_STATE');
+      if (t.state === 'HOLDING' || t.state === 'IDLE') {
+        if (ignoredId !== null) return ignore();
+        this.#schedule(t, { action, zoneId: null }, now);
+        return ACCEPTED;
+      }
       return reject('INVALID_STATE');
     }
     let zoneId: string | null = null;
@@ -347,10 +425,10 @@ export class SiteModel {
       zoneId = z.zoneId; // §5: the zone it was in when the command was accepted
     }
     if (action === 'RETURN_TO_BAY' && this.#points.CHARGING.length === 0) return reject('INVALID_STATE');
-    if (isWork(t.state)) {
-      t.queued = { action, zoneId, due: now }; // one at a time: a newer one replaces the older
-      return ACCEPTED;
-    }
+    if (ignoredId !== null) return ignore();
+    // Every supervisory command reaches the controller after its 1-6 s delay; one that arrives while
+    // the truck is loading, dumping or charging is queued then (#apply). Re-probe Q3: a HOLD sent in
+    // the last second of loading took effect 5.6 s after sending, not when loading ended.
     this.#schedule(t, { action, zoneId }, now);
     return ACCEPTED;
   }
@@ -365,7 +443,7 @@ export class SiteModel {
   #apply(t: Truck, e: Effect, now: number): void {
     if (t.state === 'MANUAL' || t.state === 'ESTOPPED' || t.state === 'FAULT') return;
     if (isWork(t.state)) {
-      if (e.action !== 'RESUME') t.queued = e;
+      if (e.action !== 'RESUME') t.queued = e; // one at a time: a newer one replaces the older (guessed: untested live)
       return;
     }
     switch (e.action) {
@@ -530,7 +608,14 @@ export class SiteModel {
     }
     this.#ticks++;
     for (const t of this.#trucks) {
-      if ((this.#ticks + t.phase) % this.#telemetryEvery === 0) this.#emit(this.#telemetry(t, now));
+      if ((this.#ticks + t.phase) % this.#telemetryEvery !== 0) continue;
+      const f = this.#telemetryFaults;
+      if (f?.silent(t.id, now)) continue; // a silent truck sends nothing and its seq does not advance
+      const m = this.#telemetry(t, now);
+      if (!f) { t.seq = m.seq; this.#emit(m); continue; }
+      const shaped = f.shape(m, { speedMps: t.speed, state: t.state, positionM: t.pos }, now);
+      t.seq = typeof shaped.seq === 'number' ? shaped.seq : m.seq;
+      this.#emit(shaped as unknown as GatewayMessage);
     }
     if (now >= this.#nextHeartbeat) {
       this.#emit({ type: 'heartbeat', server_time_ms: now });
@@ -636,6 +721,13 @@ export class SiteModel {
     if (t.queued) {
       const q = t.queued;
       t.queued = null;
+      // Re-probe Q1 (fixture queued-hold-dropped): a queued HOLD was ACCEPTED and never carried out.
+      // The queued-drop injector does this at a rate; the L0.P pessimistic version always has it on.
+      const drawn = this.#rngQueue.chance(this.#b.queuedDropProbability);
+      if ((this.#b.queueing === 'pessimistic' || this.#queuedDrops) && drawn) {
+        this.#log.event(now, t.id, 'queued_dropped', { action: q.action });
+        return;
+      }
       this.#apply(t, q, now);
     }
   }
@@ -718,6 +810,7 @@ export class SiteModel {
       const effectiveAt = closingAt + this.#config.noticeMs;
       const cancel = r.chance(this.#b.cancelProbability);
       const cancelAt = closingAt + this.#onTick(r.uniform(0.1, 0.9) * this.#config.noticeMs);
+      this.#logBlast(zoneId, closingAt, cancel);
       this.#blasts.push({
         zoneId, closingAt, effectiveAt, reopenAt: effectiveAt + this.#onTick(r.uniform(this.#b.closedMinMs, this.#b.closedMaxMs)),
         cancelAt: cancel ? cancelAt : null, stage: 'scheduled',
@@ -730,6 +823,15 @@ export class SiteModel {
     if (rest.length > 0 && r.chance(this.#b.secondZoneProbability)) add(r.pick(rest), at + this.#onTick(this.#b.secondZoneOffsetMs));
   }
 
+  // Blasts are scheduled, not faults, but the unusual ones are what L0.F switches on: record them.
+  #logBlast(zoneId: string, closingAt: number, cancelled: boolean): void {
+    const zone = this.site.zones.find((z) => z.zoneId === zoneId);
+    if (zone?.kinds.includes('bay')) this.#log.event(closingAt, null, 'bay_closing', { zoneId });
+    if (cancelled) this.#log.event(closingAt, null, 'cancelled_blast', { zoneId });
+    const other = this.#blasts.find((b) => b.zoneId !== zoneId && b.stage !== 'done' && b.closingAt <= closingAt && closingAt < (b.cancelAt ?? b.reopenAt));
+    if (other) this.#log.event(closingAt, null, 'two_zones', { zoneId, alsoClosing: other.zoneId });
+  }
+
   #setZone(zoneId: string, status: ZoneState['status'], effectiveAt: number, reason: string, now: number): void {
     this.#zones.set(zoneId, { zone_id: zoneId, status, effective_at_ms: effectiveAt, reason });
     this.#emit({ type: 'zone_event', zone_id: zoneId, status, reason, effective_at_ms: effectiveAt, server_time_ms: now });
@@ -740,7 +842,7 @@ export class SiteModel {
   #telemetry(t: Truck, now: number): Telemetry {
     const { seg, offset } = this.#locate(t.pos);
     return {
-      type: 'telemetry', vehicle_id: t.id, seq: ++t.seq, t_device_ms: now + t.deviceOffsetMs, state: t.state, task: t.task,
+      type: 'telemetry', vehicle_id: t.id, seq: t.seq + 1, t_device_ms: now + t.deviceOffsetMs, state: t.state, task: t.task,
       soc_pct: round2(t.soc), speed_mps: round2(t.speed), direction: this.#direction(t), segment_id: seg.segmentId,
       zone_id: seg.zoneId, offset_m: offset, payload_kg: t.loaded ? this.#b.payloadKg : 0, faults: [...t.faults],
       control: {
