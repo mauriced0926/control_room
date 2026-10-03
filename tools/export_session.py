@@ -6,7 +6,8 @@ Usage:
 Writes OUT_BASENAME.jsonl (the full transcript, scrubbed) and OUT_BASENAME.md (a readable rendering:
 prompts, the agent's text, each tool call with its input, and each tool result, long ones cut).
 
-Scrubbing: every key whose name contains "email" is dropped, and every email address anywhere is
+Embedded images are replaced by a note of their size. Scrubbing: every key whose name contains
+"email" is dropped, and every email address anywhere is
 replaced with <redacted-email>, except the placeholders in ALLOWED. The script then re-reads what it
 wrote and refuses to finish if any non-allowed address survives.
 """
@@ -19,6 +20,11 @@ CUT = 2500
 
 def scrub(x):
     if isinstance(x, dict):
+        src = x.get('source')
+        if x.get('type') == 'image' and isinstance(src, dict) and isinstance(src.get('data'), str):
+            # Images the agent looked at (screenshots) are committed where they matter; keep the
+            # record of having looked, not megabytes of base64.
+            return {**x, 'source': {k: v for k, v in src.items() if k != 'data'}, 'data_omitted_bytes': len(src['data'])}
         return {k: scrub(v) for k, v in x.items() if 'email' not in k.lower()}
     if isinstance(x, list):
         return [scrub(v) for v in x]
