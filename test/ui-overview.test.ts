@@ -104,7 +104,8 @@ test('weak-pack: HT-06 flagged draining fast, then warned, then depleted with a 
       if (seen.warn === null && r.socFlags.some((x) => /reach the bay|finish its lap/.test(x))) { seen.warn = c.now(); topWhenWarned = rows[0]!.vehicleId; }
       if (seen.depleted === null && r.socFlags.includes('depleted: needs a tow')) {
         seen.depleted = c.now();
-        assert.equal(r.fault, 'faulted (BATTERY_DEPLETED)');
+        assert.equal(r.fault, 'BATTERY_DEPLETED');
+        assert.equal(r.attention, 'faulted (BATTERY_DEPLETED)');
         assert.equal(rows[0]!.vehicleId, 'HT-06');
       }
     },

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Haul Overview</title>
+  <link rel="stylesheet" href="/src/ui/overview.css">
+</head>
+<body>
+  <header class="always-on" aria-label="Always on screen">
+    <div class="site"><span id="site-id">—</span><span id="mode" class="mode">REPLAY</span></div>
+    <div class="links">
+      <div id="site-link" class="link" data-state="down">Site link: —</div>
+      <div id="service-link" class="link" data-state="down">Service: not connected yet</div>
+    </div>
+    <button id="sound" class="sound" type="button" data-armed="false" aria-live="polite">Sound off: click to arm</button>
+    <div class="estop" title="E-stop. In the fixture player it is not connected to anything and does nothing.">
+      <svg viewBox="0 0 100 100" aria-hidden="true"><polygon points="30,3 70,3 97,30 97,70 70,97 30,97 3,70 3,30"/><text x="50" y="58">STOP</text></svg>
+      <div><b>E-STOP</b><span>not connected (replay)</span></div>
+    </div>
+  </header>
+
+  <section id="player" class="player" aria-label="Fixture player">
+    <span class="tag">FIXTURE PLAYER</span>
+    <select id="fixture" aria-label="Fixture"></select>
+    <button id="restart" type="button" title="Back to the start">⏮ Start</button>
+    <button id="play" type="button">▶ Play</button>
+    <button id="step1" type="button">+1 s</button>
+    <button id="step5" type="button">+5 s</button>
+    <button id="next" type="button">Next event ›</button>
+    <label>Speed <select id="speed"></select></label>
+    <input id="seek" type="range" min="0" max="1" step="100" value="0" aria-label="Position in the recording">
+    <span id="pos" class="pos">+0:00 / 0:00</span>
+    <select id="marks" aria-label="Jump to a moment"><option value="">Jump to…</option></select>
+    <p id="shows" class="shows"></p>
+  </section>
+
+  <div id="banners" class="banners" aria-live="polite"></div>
+
+  <main id="main">
+    <section class="clearance" aria-label="Zone clearance">
+      <h2>Zone clearance</h2>
+      <div id="clearance"></div>
+    </section>
+
+    <section class="track" aria-label="Track diagram">
+      <h2>Track <span class="hint">route order, not to scale · solid chip: live · grey dashed chip: old · hatched bar: could be anywhere along it</span></h2>
+      <div id="track"></div>
+    </section>
+
+    <section class="fleet" aria-label="Fleet">
+      <h2>Fleet <span class="hint">most urgent first</span></h2>
+      <table>
+        <thead><tr><th>Truck</th><th>Data</th><th>Why here</th><th>State</th><th>Zone</th><th>Battery (pack's own %)</th><th>Control</th><th>Last command</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script type="module" src="/src/ui/app.ts"></script>
+</body>
+</html>

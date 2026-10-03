@@ -56,7 +56,7 @@ export interface FleetRow {
   dataKind: TruckView['confidence'];
   data: string;
   state: string;
-  fault: string | null;
+  fault: string | null; // the fault codes as the truck reports them
   zone: string;
   zoneAlert: string | null; // a closing or closed zone it is, or might be, in
   soc: string;
@@ -85,9 +85,13 @@ export const TIERS = [
 function tierOf(t: TruckView, closing: Map<string, ZoneView>): { tier: number; why: string | null } {
   const zs = t.range === null ? [...closing.keys()] : t.mightBeIn.filter((z) => closing.has(z));
   if (zs.length) {
-    const z = closing.get(zs[0]!)!;
-    const certain = (t.confidence === 'live' || t.confidence === 'old') && t.position?.value.zoneId === z.zoneId;
-    return { tier: 0, why: `${certain ? 'in' : 'might be in'} ${zs.join(', ')} (${z.status ?? 'status unknown'})` };
+    const reported = (t.confidence === 'live' || t.confidence === 'old') ? t.position?.value.zoneId : undefined;
+    const named = (id: string) => `${id} (${closing.get(id)!.status ?? 'status unknown'})`;
+    if (reported && zs.includes(reported)) {
+      const others = zs.filter((z) => z !== reported);
+      return { tier: 0, why: `in ${named(reported)}${others.length ? `; might be in ${others.map(named).join(', ')}` : ''}` };
+    }
+    return { tier: 0, why: `might be in ${zs.map(named).join(', ')}` };
   }
   const faults = faultWords(t);
   const s = t.state?.value;
@@ -165,7 +169,7 @@ export function fleetRows(snap: FleetSnapshot): FleetRow[] {
         dataKind: t.confidence,
         data: dataState(t),
         state: stateCell(t),
-        fault: faultWords(t),
+        fault: (t.faults?.value.length ?? 0) > 0 ? t.faults!.value.join(', ') : null,
         zone: zoneCell(t),
         zoneAlert: zs.length ? zs.map((z) => `${z} ${closing.get(z)!.status ?? 'status unknown'}`).join(', ') : null,
         soc: soc.text,

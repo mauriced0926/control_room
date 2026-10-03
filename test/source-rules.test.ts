@@ -71,6 +71,19 @@ test('L1.1 the fake gateway never reads the wall clock', () => {
   assert.deepEqual(found, []);
 });
 
+// The fixture player paces itself on an injected clock too (task 6a), and knows no site. Its
+// screenshot list is the exception for site literals: like a test, it names moments in this site's
+// recordings.
+const PLAYER = new URL('../player/', import.meta.url).pathname;
+const PLAYER_SHOT_LIST = 'shoot.ts';
+
+test('L1.1 and L1.3 the fixture player takes a Clock and contains none of this site\'s literals', () => {
+  const found = sourceFiles(PLAYER).flatMap((f) =>
+    violations(readFileSync(f, 'utf8'), relative(PLAYER, f) === PLAYER_SHOT_LIST ? WALL_CLOCK : [...WALL_CLOCK, ...SITE_LITERALS])
+      .map((v) => `player/${relative(PLAYER, f)} ${v}`));
+  assert.deepEqual(found, []);
+});
+
 test('L1.3 the fake gateway\'s model contains none of this site\'s literals (only its default config does)', () => {
   const found = sourceFiles(FAKE)
     .filter((f) => relative(FAKE, f) !== FAKE_SITE_CONFIG)

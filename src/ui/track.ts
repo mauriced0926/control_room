@@ -145,12 +145,15 @@ export interface Band {
   x1: number;
   kind: BandKind;
   status: string; // in words: "open", "CLOSING 1:23", "CLOSED", "status unknown"
+  word: string; // the status on its own line: "open", "CLOSING", "CLOSED", "unknown"
+  detail: string; // and what goes under it: "1:23", "due 0:12 ago", ""
 }
 
 export interface Chip {
   vehicleId: string;
   kind: 'live' | 'old';
-  x: number;
+  x: number; // where the truck is
+  boxX: number; // where its chip is centred: x, pulled in from the ends so the chip stays on the diagram
   lane: number;
   width: number;
   lines: string[]; // the id, then badges in words
@@ -185,17 +188,18 @@ const CHIP_PAD_PX = 16;
 const LANE_GAP_PX = 6;
 export const MIN_STRETCH_PX = 96;
 
-export function zoneStatusWords(z: ZoneView | undefined): { kind: BandKind; status: string } {
+export function zoneStatusWords(z: ZoneView | undefined): { kind: BandKind; status: string; word: string; detail: string } {
+  const w = (kind: BandKind, word: string, detail = '') => ({ kind, word, detail, status: detail ? `${word}${detail.startsWith('due') ? ', ' : ' '}${detail}` : word });
   switch (z?.status ?? null) {
-    case 'OPEN': return { kind: 'open', status: 'open' };
-    case 'CLOSED': return { kind: 'closed', status: 'CLOSED' };
+    case 'OPEN': return w('open', 'open');
+    case 'CLOSED': return w('closed', 'CLOSED');
     case 'CLOSING': {
       const left = z!.msUntilEffective;
-      if (left === null) return { kind: 'closing', status: 'CLOSING' };
-      if (left < 0) return { kind: 'closing', status: `CLOSING, due ${countdown(-left)} ago` };
-      return { kind: 'closing', status: `CLOSING ${countdown(left)}` };
+      if (left === null) return w('closing', 'CLOSING');
+      if (left < 0) return w('closing', 'CLOSING', `due ${countdown(-left)} ago`);
+      return w('closing', 'CLOSING', countdown(left));
     }
-    default: return { kind: 'unknown', status: 'status unknown' };
+    default: return w('unknown', 'status unknown');
   }
 }
 
@@ -216,7 +220,7 @@ export function trackModel(site: SiteData, snap: FleetSnapshot, width: number): 
   const L = site.loopLengthM;
   const zones = new Map(snap.zones.map((z) => [z.zoneId, z]));
   const bands: Band[] = scale.stretches.map((s) => {
-    const w = s.zoneId === null ? { kind: 'unknown' as const, status: 'not in route' } : zoneStatusWords(zones.get(s.zoneId));
+    const w = s.zoneId === null ? { kind: 'unknown' as const, status: 'not in route', word: 'not in route', detail: '' } : zoneStatusWords(zones.get(s.zoneId));
     return { zoneId: s.zoneId, x0: s.x0, x1: s.x1, ...w };
   });
 
@@ -230,7 +234,9 @@ export function trackModel(site: SiteData, snap: FleetSnapshot, width: number): 
       const badges = chipBadges(t);
       if (badges.length) lines.push(badges.join(' · '));
       const w = Math.max(...lines.map((l) => l.length)) * CHAR_PX + CHIP_PAD_PX;
-      chips.push({ vehicleId: t.vehicleId, kind: t.confidence, x: scale.x(t.position.value.loopM), width: w, lines, fault: faulty });
+      const x = scale.x(t.position.value.loopM);
+      const boxX = Math.max(w / 2, Math.min(width - w / 2, x));
+      chips.push({ vehicleId: t.vehicleId, kind: t.confidence, x, boxX, width: w, lines, fault: faulty });
       continue;
     }
     if (t.confidence === 'unknown' && t.ageMs === null) { never.push(t); continue; }
@@ -258,8 +264,8 @@ export function trackModel(site: SiteData, snap: FleetSnapshot, width: number): 
 
   // Chips are placed left to right; ranges with the narrowest first, so the whole-loop bars sit
   // below the precise ones.
-  chips.sort((a, b) => a.x - b.x);
-  const chipLanes = assignLanes(chips.map((c) => ({ id: c.vehicleId, spans: [[c.x - c.width / 2, c.x + c.width / 2]] })), LANE_GAP_PX);
+  chips.sort((a, b) => a.boxX - b.boxX);
+  const chipLanes = assignLanes(chips.map((c) => ({ id: c.vehicleId, spans: [[c.boxX - c.width / 2, c.boxX + c.width / 2]] })), LANE_GAP_PX);
   const span = (r: Omit<RangeMark, 'lane'>) => r.pieces.reduce((a, p) => a + p.x1 - p.x0, 0);
   ranges.sort((a, b) => span(a) - span(b));
   const rangeLanes = assignLanes(ranges.map((r) => ({
