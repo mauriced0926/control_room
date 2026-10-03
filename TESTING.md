@@ -39,7 +39,7 @@ live captures; task 2 owns them and must re-check any change against the capture
 | 2. Ingest and fleet state | L1, L2.1–L2.28, L3; owns the thresholds |
 | 3. Gateway link | L2.40–L2.44, L5 link rows, L6.1–L6.2 |
 | 4. Command registry | L2.30–L2.39, L5 command rows, L6.6, L8.1–L8.3 |
-| 5. Blast engine and auto-resume | L2.1–L2.8, L2.50–L2.54, L4, L5 (all) |
+| 5. Blast engine and auto-resume | L2.1–L2.8, L2.50–L2.59, L4, L5 (all); the rules are `BLAST.md` |
 | 6. Server, login, alerting, UI, driving | L2.60–L2.64, L6.3–L6.5, L7, L8, L9 |
 | 7. Deploy and soak | L10, L12, L13; L11 is run by a person |
 
@@ -181,6 +181,11 @@ Queuing is re-probed live once DRAW_12 is not under a blast. **That sends real c
 | L2.52 | `EXIT_ZONE` picks the nearest boundary itself; if that lands the truck in an adjacent zone that is also closing or closed and that it cannot clear, the system does not issue it blindly: it holds, raises the can't-clear alarm, and offers driving out the other way |
 | L2.53 | The system's own commands pass through the same check as operators' (one code path, tested once from each caller) |
 | L2.54 | BAY closing (open question 5): `EXIT_ZONE` is refused there, so trucks in BAY are alarmed at once with "drive it out or hold the shot" |
+| L2.55 | `BLAST.md` B6a: a truck LOADING, DUMPING or CHARGING at a segment end that is a boundary into a zone that is `CLOSED`, or `CLOSING` and it can't pass through in time, is taken with `TAKE_CONTROL` as `system:B6a`; one case per duty-stop kind, and on a different site (duty stops found from segment kinds) |
+| L2.56 | Path prediction includes duty stops: their time, and the loaded or empty speed after them. B6's pass-through and B2's own exit both use it: a truck passing through a load zone is judged with its 20 s stop and loaded speed |
+| L2.57 | `BLAST.md` B2: a confident truck leaving on its own gets no command until its last safe moment; if it isn't out then, `EXIT_ZONE` goes at that moment, not earlier and not later |
+| L2.58 | `BLAST.md` B11: an old truck reported just outside a zone and heading in makes it UNSURE, never CLEAR; the same truck live, out of reach, leaves it CLEAR (`test/clearance.test.ts`) |
+| L2.59 | `BLAST.md` B16: a command to a silent or contradicted truck is retried a bounded number of times and then reported as "can't verify: data silent/frozen", not as failed; when the data returns, its effect is checked |
 
 **Alerting** (`CONTEXT.md` assumption 11: interrupt only for action needed in the next minute)
 
@@ -236,7 +241,7 @@ Seeded random days from the fake gateway, mixing every fault in L0.F. 200 seeds 
 | L4.R2a | Never recommend "clear" while the system believes a truck might be inside | Belief | **Every fault, including the undetectable one.** This never leaves the suite |
 | L4.R2b | Never recommend "clear" while a truck is inside | Truth | Every detectable fault |
 | L4.R2c | As L4.R2b, for a truck frozen while stopped that then moves | Truth | The undetectable fault, run separately. Violations are **counted, not failed**, and reported as the README §5 limit of enforcement |
-| L4.R3 | Every truck the system held for a zone is resumed within 15 s of the zone reopening (`CLEARED` or `CANCELLED`), unless it is still blocked: a lease, a fault, an operator's hold, or a path into another zone that is closing or closed | Truth | Every fault |
+| L4.R3 | Every truck the system held for a zone is resumed within 15 s of the zone reopening (`CLEARED` or `CANCELLED`), unless it is still blocked: a lease, a fault, an operator's hold, or a path into another zone that is closing or closed. A truck still carrying out an `EXIT_ZONE` gets `HOLD` before `RESUME` (B12) | Truth | Every fault |
 | L4.R4 | A hold placed by an operator is never resumed by the system | Truth | Every fault |
 | L4.R5 | The system never resumes a truck into a zone that is closing or closed | Truth | Every fault |
 | L4.M1 | Unnecessary holds: blast holds on trucks whose true path would never have entered the zone while it was closed | Truth | Every fault. **A metric, not a pass/fail**; a rise is a regression to explain |
@@ -303,7 +308,7 @@ Link and command rows belong to tasks 3 and 4; the CLOSING column to task 5.
 | L8.1 | A command blocked by a lease is shown to the lease holder as well as the sender (Priya's near miss) |
 | L8.2 | Only a supervisor can force a takeover |
 | L8.3 | `operator_id` in a browser payload is ignored; the session's is used |
-| L8.4 | "Who moved HT-06 at 3:12?" answered by one query: operator or system, the rule and inputs for system actions, the ack and the effect |
+| L8.4 | "Who moved HT-06 at 3:12?" answered by one query: operator or system, the rule and inputs for system actions, the ack and the effect. System commands reach the gateway as `system:<rule>`, so the site's statutory log carries the rule too |
 | L8.5 | The audit log is append-only and survives a restart; system and operator actions are in the same log, each with what, when and why |
 | L8.6 | Every route and the websocket refuse an unauthenticated user |
 
