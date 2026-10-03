@@ -120,6 +120,27 @@ test('a live truck at the boundary, reported outside, is UNSURE: it might alread
   assert.match(c.reasons[0]!.why, /boundary/);
 });
 
+// BLAST.md B11: CLEAR needs every truck's range outside the zone, old trucks included. An old truck is
+// judged by where it could be now, not where it last said it was: 2-5 s at 3 m/s is up to ~15 m.
+test('an old truck reported just outside and heading in is UNSURE, never CLEAR; the same truck live is CLEAR', () => {
+  const r = rig();
+  const ids = r.fleet.site!.vehicles;
+  const parkRest = (seq: number) => ids.slice(1).forEach((id, i) => r.send({ vehicle_id: id, seq, state: 'IDLE', speed_mps: 0, segment_id: 'SEG-BAY', zone_id: 'BAY', offset_m: 5 + i }));
+  parkRest(1);
+  // HT-01 tramming forward at 3 m/s, 10 m short of DRAW_12.
+  r.send({ vehicle_id: ids[0], seq: 1, state: 'TRAMMING', speed_mps: 3, direction: 'FWD', segment_id: 'SEG-L4N-1', zone_id: 'L4_NORTH', offset_m: 190 });
+  assert.equal(r.truck(ids[0]).confidence, 'live');
+  assert.equal(zoneClearance(closing('DRAW_12'), r.fleet.snapshot().trucks).verdict, 'CLEAR', 'live, its range stops short of the zone');
+
+  r.advance(4_000);
+  parkRest(2);
+  assert.equal(r.truck(ids[0]).confidence, 'old');
+  const c = zoneClearance(closing('DRAW_12'), r.fleet.snapshot().trucks);
+  assert.equal(c.verdict, 'UNSURE', 'old by 4 s it could have driven ~12 m: it might be inside');
+  assert.equal(c.action, HOLD_THE_SHOT);
+  assert.deepEqual(c.reasons.map((x) => x.vehicleIds), [[ids[0]]]);
+});
+
 test('a faulted truck inside says so', () => {
   const r = rig();
   r.send({ seq: 1, state: 'FAULT', speed_mps: 0, faults: ['BATTERY_DEPLETED'], segment_id: 'SEG-INC-1', zone_id: 'INCLINE', offset_m: 50 });
