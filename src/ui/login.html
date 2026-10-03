@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Haul control room: log in</title>
+  <link rel="stylesheet" href="/src/ui/overview.css">
+</head>
+<body class="login-page">
+  <main class="login">
+    <h1>Haul control room</h1>
+    <p class="login-note">Log in with your own name. Every command you send is recorded under it.</p>
+    <!--error-->
+    <form method="post" action="/login">
+      <label>Name <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Log in</button>
+    </form>
+  </main>
+</body>
+</html>
