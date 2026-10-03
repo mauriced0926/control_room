@@ -140,7 +140,19 @@ export class FakeGateway {
       m.setDeviceOffset(plan.clockSkew.vehicle, skew);
       log.start(m.startMs, plan.clockSkew.vehicle, 'clock_skew', { offsetMs: skew });
     }
-    if (plan.weakPack) m.weakPack(plan.weakPack.vehicle, rng.uniform(b.weakFactorMin, b.weakFactorMax), rng.uniform(b.weakDiesMinFraction, b.weakDiesMaxFraction));
+    if (plan.weakPack) {
+      // Both live weak packs were empty trucks on their way to load, and died on the climb after it.
+      // Unless the truck is pinned, take an empty one that no motion or silence fault is on (a loaded
+      // truck already past the load point would die within seconds); the dealt truck if there is none.
+      let v = plan.weakPack.vehicle;
+      if (typeof f.weakPack !== 'object' || f.weakPack.vehicle === undefined) {
+        const busy = new Set([plan.frozenMoving, plan.frozenStationary, plan.silent, plan.hydPressureLow, plan.batteryDepleted].map((p) => p?.vehicle));
+        const empty = m.site.vehicles.filter((x) => !busy.has(x) && !m.truth(x).loaded);
+        if (empty.length > 0 && !empty.includes(v)) v = rng.pick(empty);
+        plan.weakPack.vehicle = v;
+      }
+      m.weakPack(v, rng.uniform(b.weakFactorMin, b.weakFactorMax), rng.uniform(b.weakDiesMinFraction, b.weakDiesMaxFraction));
+    }
     const hyd = plan.hydPressureLow, dep = plan.batteryDepleted;
     if (hyd) this.#later(hyd.atMs, () => m.injectFault(hyd.vehicle, 'HYD_PRESSURE_LOW'));
     if (dep) this.#later(dep.atMs, () => m.deplete(dep.vehicle));

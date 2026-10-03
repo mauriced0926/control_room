@@ -107,9 +107,12 @@ export const LIVE_DAY: Readonly<Faults> = Object.freeze({
 
 // The per-truck classes in the order trucks are dealt to them. Distinct trucks while there are
 // enough, as on every live day; on a smaller site some trucks carry two.
+// Fractional SoC is dealt last of the live classes: on a site with fewer trucks than classes it is
+// the one that shares a truck, and it combines harmlessly with any other. The two classes that are
+// not part of a live day come after it.
 const TRUCK_CLASSES = [
-  'frozenMoving', 'frozenStationary', 'silent', 'seqReset', 'fractionalSoc', 'malformed', 'clockSkew',
-  'weakPack', 'hydPressureLow', 'batteryDepleted',
+  'frozenMoving', 'silent', 'seqReset', 'malformed', 'clockSkew', 'weakPack', 'hydPressureLow', 'fractionalSoc',
+  'frozenStationary', 'batteryDepleted',
 ] as const;
 export type TruckClass = (typeof TRUCK_CLASSES)[number];
 
