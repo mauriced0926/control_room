@@ -82,6 +82,7 @@ export interface Behaviour {
   // Acks (probe log, send to ack on the probe's clock; the ack's server_time_ms is when the gateway got the command)
   ackDelayMinMs: number;          // measured: 157-2536 ms over 22 acks, median ~570; log-uniform fits the quartiles
   ackDelayMaxMs: number;
+  ackDelayImmediateMaxMs: number; // measured: ESTOP, CLEAR_ESTOP, TAKE_ / RELEASE_CONTROL acked in 157-680 ms (6 acks), never slower
   ackDelayInvalidMinMs: number;   // measured: BAD_COMMAND_ID 97 ms, BAD_JSON ~120 ms (the gateway answers these itself)
   ackDelayInvalidMaxMs: number;
   lostAckProbability: number;     // measured once: 1 of 25 acks never arrived (S1's HOLD, which still executed)
@@ -184,6 +185,7 @@ export const DEFAULT_BEHAVIOUR: Readonly<Behaviour> = Object.freeze({
 
   ackDelayMinMs: 150,
   ackDelayMaxMs: 2_600,
+  ackDelayImmediateMaxMs: 700,
   ackDelayInvalidMinMs: 50,
   ackDelayInvalidMaxMs: 150,
   lostAckProbability: 1 / 25,

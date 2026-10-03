@@ -162,6 +162,10 @@ test('ack latency: acks arrive 150 ms to 2.6 s after the command, stamped with w
   h.sendCommand({ command_id: 'take', vehicle_id: 'HT-04', action: 'TAKE_CONTROL', operator_id: 'op' });
   assert.equal(h.messages('lease_event').at(-1)?.event, 'GRANTED');
   assert.equal(h.messages('command_ack').filter((a) => a.command_id === 'take').length, 0);
+  // commands that act at once are acked within 0.7 s (live: 157-680 ms)
+  const t1 = h.clock.now();
+  while (!h.messages('command_ack').some((a) => a.command_id === 'take')) h.advance(10);
+  assert.ok(h.clock.now() - t1 >= 150 && h.clock.now() - t1 <= 710, `${h.clock.now() - t1} ms`);
 });
 
 test('lost ack: the command still executes; resending the same command_id gets the original result', () => {

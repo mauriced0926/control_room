@@ -65,9 +65,12 @@ export class SiteRadio {
   ack(line: string, ack: CommandAck, n: number, action: string): void {
     const r = this.#rngAck, b = this.#b, f = this.#f;
     const invalid = ack.reason === 'BAD_JSON' || ack.reason === 'BAD_COMMAND_ID';
+    // Commands that act at once (e-stop, leases) were acked within 0.7 s live; the rest up to 2.6 s.
+    const immediate = ['ESTOP', 'CLEAR_ESTOP', 'TAKE_CONTROL', 'RELEASE_CONTROL'].includes(action);
+    const max = immediate ? b.ackDelayImmediateMaxMs : b.ackDelayMaxMs;
     const delay = invalid
       ? Math.round(r.uniform(b.ackDelayInvalidMinMs, b.ackDelayInvalidMaxMs))
-      : Math.round(Math.exp(r.uniform(Math.log(b.ackDelayMinMs), Math.log(b.ackDelayMaxMs)))); // log-uniform
+      : Math.round(Math.exp(r.uniform(Math.log(b.ackDelayMinMs), Math.log(max)))); // log-uniform
     const lost = r.chance(b.lostAckProbability);
     if (matches(f.lostAcks, lost, { n, command_id: ack.command_id, vehicle_id: ack.vehicle_id ?? '', action })) {
       this.#log.event(this.#clock.now(), ack.vehicle_id, 'lost_ack', { command_id: ack.command_id, action, status: ack.status });
