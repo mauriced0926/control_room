@@ -122,3 +122,32 @@ send and ack lines for that id showed the shift.
 remembering doesn't work: three pieces of code by two authors made the same mistake within a day. Ack
 correlation (by time, against the latest send) belongs in one tested place, the command registry
 (`TESTING.md` L2.33), and every later tool that reads acks uses it rather than rewriting it.
+
+---
+
+## 5. A fixture that left out the evidence, read wrong twice
+
+**Session:** planning session; fake gateway milestone 2 run as a sub-agent, 2026-10-03.
+
+**Asked.** Milestone 2 of the fake gateway (`tasks/01b-fake-gateway-m2.md`): fault injectors that
+reproduce the live fixtures, checked by running `research/report.py` over both (L0.C1).
+
+**Came back.** All tests passing, and a report that the research disagreed with the fake in three
+places. One: the re-probe's R1 fixture "is more than a silent truck": no heartbeats for 26 s while the
+connection stayed open. The agent built a "link stall" injector to reproduce it.
+
+**What was wrong.** Both readings of R1. I had written it up as the truck going silent for 41 s. The
+agent read it as a stalled link. The raw log has HT-04 quiet for ~15 s while the link was up, then
+the gateway closing the connection and refusing logins for ~25 s. The fixture I cut had kept HT-04's
+messages and the heartbeats but not the connection events, so the drop was invisible in it. My
+trimming decided what both of us could see. The agent's two other claims were right: my loss figures
+for runs 2 and 3 were too low, because I measured outages between heartbeats, which overshoot; and my
+`report.py` crashed on the weak-pack fixture.
+
+**How it was found.** By going back to the full re-probe log, not the fixture: link events,
+heartbeats and every truck's telemetry across the gap.
+
+**What was done.** The fixture now includes link events; the conformance test models a link drop that
+ends before the fifth reconnect, as live; the stall injector stays, marked as not seen live; the loss
+figures and `report.py` are fixed (`4531e4c`, `e007d97`). A fixture is a claim about what matters in a
+recording. Cutting it narrowly hides the context that would show the claim is wrong.
