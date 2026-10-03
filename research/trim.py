@@ -81,9 +81,10 @@ if reprobe:
          'no ack and no effect; a second one, under a new command_id, works.',
          [(reprobe, 255, 320, lambda r: truck(r, 'HT-08') or about(r, 'HT-08'))]),
         ('loaded-reverse-into-silence', 'reprobe', 'R1: EXIT_ZONE on loaded HT-04, 47 m into L4_SOUTH. It reverses at 2.0 m/s '
-         '(1.99 by its own clock, over 2.4 m), then goes silent for 41 s and reappears HOLDING 2 m outside the zone, '
-         '53.8 m back.',
-         [(reprobe, 310, 380, lambda r: truck(r, 'HT-04') or about(r, 'HT-04') or is_type(r, 'heartbeat'))]),
+         '(1.99 by its own clock, over 2.4 m); then HT-04 alone goes quiet for about 15 s while the link is up and the '
+         'other trucks report, then the link drops for about 25 s (logins accepted then closed, until hello). It '
+         'reappears HOLDING 2 m outside the zone, 53.8 m back. Includes the link events and heartbeats.',
+         [(reprobe, 310, 380, lambda r: truck(r, 'HT-04') or about(r, 'HT-04') or link(r))]),
     ]
 
 os.makedirs(outdir, exist_ok=True)

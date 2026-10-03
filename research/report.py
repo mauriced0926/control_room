@@ -1,7 +1,7 @@
 # Per-run report over a capture.jsonl, so runs can be compared like for like.
 import json, sys, collections, statistics as st
 
-rows = [json.loads(l) for l in open(sys.argv[1])]
+rows = [r for r in (json.loads(l) for l in open(sys.argv[1])) if r.get('kind') != 'fixture']
 T0 = rows[0]['rx_ms']
 def t(rx): return '%+6.0fs' % ((rx - T0) / 1000)
 def num(x):
@@ -96,7 +96,7 @@ for v, l in sorted(tel.items(), key=lambda kv: str(kv[0])):
         drops = sum(max(0, a[1] - b[1]) for a, b in zip(tram, tram[1:]) if 0 < b[0] - a[0] < 2000)
         mins = sum(b[0] - a[0] for a, b in zip(tram, tram[1:]) if 0 < b[0] - a[0] < 2000) / 60000
         drain = drops * scale / mins if mins else None
-        fleet_drain[v] = drain
+        if drain is not None: fleet_drain[v] = drain
     # malformed fields
     bad = collections.Counter()
     for _, m in l:
@@ -138,6 +138,6 @@ for v, l in sorted(tel.items(), key=lambda kv: str(kv[0])):
     print('%s n=%d dupIdent=%d reorder=%d skew=%+.1fs soc %s->%s drain=%s/min | last %s %s %.0fm' % (
         v, len(l), ident, reorder, skew / 1000, s0, s1, '%.2f' % drain if drain else '?', lastm.get('state'), lastm.get('zone_id'), pos(lastm) or -1))
     for i in issues: print('    -', i)
-if fleet_drain:
+if fleet_drain and st.median(fleet_drain.values()) > 0:
     med = st.median(fleet_drain.values())
     print('fleet median drain %.2f%%/min; outliers:' % med, {v: round(d / med, 1) for v, d in fleet_drain.items() if d > 1.6 * med or d < 0.5 * med})
