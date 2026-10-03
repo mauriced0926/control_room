@@ -6,15 +6,16 @@ import { createHash } from 'node:crypto';
 import { ManualClock } from '../src/clock.ts';
 import { FakeGateway } from '../fake/gateway.ts';
 import { DLH1 } from '../fake/dlh1.ts';
+import { LIVE_DAY, type Faults } from '../fake/faults.ts';
 
 const T0 = 1_790_000_000_000;
 const DAY_MS = 15 * 60_000;
 
 // A scripted day: random blasts, and a fixed set of inputs at fixed times covering every kind of
 // command, a lease with driving, an e-stop and malformed lines. Returns every line one client saw.
-function runDay(seed: number): { lines: string[]; cpuMs: number } {
+function runDay(seed: number, faults?: Faults): { lines: string[]; cpuMs: number; truth: string } {
   const clock = new ManualClock(T0);
-  const gw = new FakeGateway(clock, { seed, site: DLH1, blasts: 'random' });
+  const gw = new FakeGateway(clock, { seed, site: DLH1, blasts: 'random', ...(faults ? { faults } : {}) });
   gw.start();
   const c = gw.connect();
   c.send({ type: 'auth', email: 'det@example.com' });
@@ -47,7 +48,7 @@ function runDay(seed: number): { lines: string[]; cpuMs: number } {
   clock.advance(DAY_MS - clock.now() + T0);
   const used = process.cpuUsage(started);
   gw.stop();
-  return { lines: c.lines, cpuMs: (used.user + used.system) / 1000 };
+  return { lines: c.lines, cpuMs: (used.user + used.system) / 1000, truth: JSON.stringify(gw.truthLog.entries()) };
 }
 
 const digest = (lines: string[]) => createHash('sha256').update(lines.join('\n')).digest('hex');
@@ -58,10 +59,22 @@ test('L0.C4 the same seed and inputs give a byte-identical stream', () => {
   assert.ok(a.lines.length > 50_000, `${a.lines.length} lines in a 15-minute day`);
   assert.equal(a.lines.length, b.lines.length);
   assert.equal(digest(a.lines), digest(b.lines));
-  const types = new Set(a.lines.map((l) => (JSON.parse(l) as { type: string }).type));
+  const types = new Set(a.lines.map((l) => (JSON.parse(l) as { type: string }).type)); // no faults: every line parses
   for (const t of ['hello', 'telemetry', 'heartbeat', 'zone_event', 'command_ack', 'lease_event']) {
     assert.ok(types.has(t), `the stream includes ${t}`);
   }
+});
+
+// Milestone 2: every injector draws from a seeded stream, so a live day (all of them on, ack latency,
+// link drops, truncated lines) replays byte for byte too, and so does its truth log.
+test('L0.C4 a live day with every fault on is byte-identical for the same seed, truth log included', () => {
+  const a = runDay(42, LIVE_DAY);
+  const b = runDay(42, LIVE_DAY);
+  assert.equal(a.lines.length, b.lines.length);
+  assert.equal(digest(a.lines), digest(b.lines));
+  assert.equal(a.truth, b.truth);
+  assert.ok(JSON.parse(a.truth).length > 1_000, 'faults happened');
+  assert.notEqual(digest(runDay(43, LIVE_DAY).lines), digest(a.lines));
 });
 
 test('L0.C4 a different seed gives a different day', () => {
@@ -75,4 +88,7 @@ test('a 15-minute day takes well under a second of CPU', () => {
   const { cpuMs } = runDay(2);
   console.log(`15-minute day: ${cpuMs.toFixed(0)} ms of CPU`);
   assert.ok(cpuMs < 1_000, `took ${cpuMs.toFixed(0)} ms of CPU`);
+  const live = runDay(2, LIVE_DAY).cpuMs;
+  console.log(`15-minute live day: ${live.toFixed(0)} ms of CPU`);
+  assert.ok(live < 1_000, `a live day took ${live.toFixed(0)} ms of CPU`);
 });

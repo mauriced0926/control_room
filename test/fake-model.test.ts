@@ -340,10 +340,6 @@ test('queuing: a newer queued command replaces the older one', () => {
   assert.ok(h.telemetry('HT-01').every((t) => t.state !== 'HOLDING'), 'the HOLD never ran');
 });
 
-test('queuing behaviour is a parameter: only the spec version exists in milestone 1', () => {
-  assert.throws(() => new FakeGateway(new ManualClock(T0), { seed: 1, site: DLH1, behaviour: { queueing: 'pessimistic' as 'spec' } }), /queueing/);
-});
-
 // ---- EXIT_ZONE and RETURN_TO_BAY ----
 
 test('EXIT_ZONE: an empty truck nearer the start of its zone reverses at 3.0 m/s and holds 2 m outside (probe S3)', () => {
