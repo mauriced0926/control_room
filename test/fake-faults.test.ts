@@ -209,6 +209,21 @@ test('accepted then ignored at the measured rate, any supervisory command, never
   assert.ok(n > 15 && n < 55, `${n} of 300 ignored (1 in 9 measured once)`);
 });
 
+test('queued command dropped (re-probe Q1, fixture queued-hold-dropped): the spec version, switched on, sometimes never runs one', () => {
+  let dropped = 0, held = 0;
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+    const h = harness({ seed, faults: { queuedDrops: true }, trucks: [{ vehicle_id: 'HT-06', positionM: 835, loaded: false, socPct: 80 }] });
+    assert.ok(h.until('HT-06', (t) => t.state === 'LOADING', 5_000) >= 0);
+    assert.equal(h.command('HT-06', 'HOLD').status, 'ACCEPTED');
+    h.advance(40_000);
+    const st = h.latest('HT-06').state;
+    const log = h.gw.truthLog.entries({ fault: 'queued_dropped' });
+    if (st === 'HOLDING') { held++; assert.equal(log.length, 0); }
+    else { dropped++; assert.equal(st, 'TRAMMING'); assert.deepEqual(log.map((e) => e.detail.action), ['HOLD']); assert.notEqual(h.latest('HT-06').zone_id, 'DRAW_12'); }
+  }
+  assert.ok(dropped > 0 && held > 0, `${dropped} dropped, ${held} held`);
+});
+
 // ---- link drops ----
 
 test('link drop: every client is cut off; logins during it are accepted then closed before hello; nothing is queued', () => {

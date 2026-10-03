@@ -305,8 +305,10 @@ test('queuing: a HOLD sent while LOADING waits for the load to finish, then hold
   const h = harness({ trucks: [{ vehicle_id: 'HT-01', positionM: 835, loaded: false, socPct: 80 }] });
   assert.ok(h.until('HT-01', (t) => t.state === 'LOADING', 5_000) >= 0);
   assert.equal(h.command('HT-01', 'HOLD').status, 'ACCEPTED');
-  assert.equal(h.gw.truth('HT-01').queued, 'HOLD');
-  h.advance(10_000);
+  assert.deepEqual(h.gw.truth('HT-01').pending, ['HOLD'], 'on its way: the 1-6 s delay first');
+  h.advance(6_000);
+  assert.equal(h.gw.truth('HT-01').queued, 'HOLD', 'then queued behind the load');
+  h.advance(4_000);
   assert.equal(h.latest('HT-01').state, 'LOADING');
   assert.ok(h.until('HT-01', (t) => t.state !== 'LOADING', 15_000) >= 0);
   const t = h.latest('HT-01');
@@ -320,7 +322,8 @@ test('queuing: RESUME while a command is queued cancels it, and the truck carrie
   const h = harness({ trucks: [{ vehicle_id: 'HT-01', positionM: 835, loaded: false, socPct: 80 }] });
   assert.ok(h.until('HT-01', (t) => t.state === 'LOADING', 5_000) >= 0);
   h.command('HT-01', 'HOLD');
-  h.advance(3_000);
+  h.advance(6_000);
+  assert.equal(h.gw.truth('HT-01').queued, 'HOLD');
   assert.equal(h.command('HT-01', 'RESUME').status, 'ACCEPTED');
   assert.equal(h.gw.truth('HT-01').queued, null);
   assert.ok(h.until('HT-01', (t) => t.state === 'TRAMMING', 20_000) >= 0);
@@ -333,11 +336,37 @@ test('queuing: a newer queued command replaces the older one', () => {
   assert.ok(h.until('HT-01', (t) => t.state === 'LOADING', 5_000) >= 0);
   h.command('HT-01', 'HOLD');
   h.command('HT-01', 'RETURN_TO_BAY');
+  h.advance(6_000);
   assert.equal(h.gw.truth('HT-01').queued, 'RETURN_TO_BAY');
   assert.ok(h.until('HT-01', (t) => t.state !== 'LOADING', 25_000) >= 0);
   h.advance(2_000);
   assert.equal(h.latest('HT-01').task, 'RETURN_TO_BAY');
   assert.ok(h.telemetry('HT-01').every((t) => t.state !== 'HOLDING'), 'the HOLD never ran');
+});
+
+test('a command still within its 1-6 s delay cannot be called back: RESUME is INVALID_STATE, the HOLD still lands (re-probe Q3)', () => {
+  const h = harness({ trucks: [{ vehicle_id: 'HT-08', positionM: 500, loaded: false, socPct: 80 }] });
+  h.command('HT-08', 'HOLD');
+  const r = h.command('HT-08', 'RESUME');
+  assert.deepEqual([r.status, r.reason], ['REJECTED', 'INVALID_STATE']);
+  assert.ok(h.until('HT-08', (t) => t.state === 'HOLDING', 6_100) >= 0);
+  h.advance(5_000);
+  assert.equal(h.latest('HT-08').state, 'HOLDING');
+});
+
+test('a HOLD sent in the last second of loading takes effect after its delay, not when loading ends (re-probe Q3)', () => {
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    const h = harness({ seed, trucks: [{ vehicle_id: 'HT-08', positionM: 835, loaded: false, socPct: 80 }] });
+    assert.ok(h.until('HT-08', (t) => t.state === 'LOADING', 5_000) >= 0);
+    h.advance(19_200);
+    const sent = h.clock.now();
+    h.command('HT-08', 'HOLD');
+    assert.ok(h.until('HT-08', (t) => t.state === 'HOLDING', 7_000) >= 0);
+    const after = h.clock.now() - sent;
+    const due = h.gw.truth('HT-08');
+    assert.ok(after >= 1_000 && after <= 6_250, `seed ${seed}: held ${after} ms after sending`);
+    assert.equal(due.queued, null);
+  }
 });
 
 // ---- EXIT_ZONE and RETURN_TO_BAY ----
@@ -725,6 +754,7 @@ test('truth is readable separately from what is sent, and is a copy', () => {
   const h = harness({ trucks: [{ vehicle_id: 'HT-01', positionM: 835, loaded: false, socPct: 80 }] });
   assert.ok(h.until('HT-01', (t) => t.state === 'LOADING', 5_000) >= 0);
   h.command('HT-01', 'EXIT_ZONE');
+  h.advance(6_000);
   const t = h.gw.truth('HT-01');
   assert.equal(t.vehicleId, 'HT-01');
   assert.equal(t.zoneId, 'DRAW_12');

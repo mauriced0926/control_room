@@ -16,7 +16,7 @@ export interface Behaviour {
   autoSpeedEmpty: number;         // spec §3
   autoSpeedLoaded: number;        // spec §3
   reverseSpeedEmpty: number;      // measured: probe S3, EXIT_ZONE reversed at 3.0 m/s
-  reverseSpeedLoaded: number;     // spec-assumed (2.0, the autonomous loaded speed); not measured. L0.P runs 1.5 too
+  reverseSpeedLoaded: number;     // measured thinly (re-probe R1: 1.99 m/s over 2.4 m), as the spec's 2.0. L0.P runs 1.5 too
   manualSpeedEmpty: number;       // spec §3, at full throttle
   manualSpeedLoaded: number;      // spec §3, at full throttle
   limpSpeed: number;              // spec §6.6, 1.0 m/s; guessed: scaled by |throttle| like the others
@@ -35,10 +35,10 @@ export interface Behaviour {
   drainLoadedPctPerKm: number;    // measured: fleet 9.00 %/km loaded (weak-pack fixture)
 
   // Commands and control
-  commandDelayMinMs: number;      // spec §5 "1 to 6 seconds"; live: HOLD 3.2 s, EXIT_ZONE ~4 s, RESUME 1.3 s
+  commandDelayMinMs: number;      // spec §5 "1 to 6 seconds"; live: HOLD 3.2 s and 5.6 s, EXIT_ZONE ~4 s, RESUME 1.3 s
   commandDelayMaxMs: number;
   queueing: 'spec' | 'pessimistic'; // L0.P: 'spec' as PROTOCOL.md §5 says; 'pessimistic' also drops queued commands without notice
-  queuedDropProbability: number;  // guessed: L0.P pessimistic version only; queuing is unverified live (S2 never ran)
+  queuedDropProbability: number;  // guessed: re-probe Q1 saw 1 queued HOLD of 1 dropped (perhaps accepted-then-ignored); used by the queued-drop injector and L0.P
   deadmanMs: number;              // spec §6.3; deadman seen 0.4-0.6 s after the grant live
   leaseIdleTimeoutMs: number;     // spec §6.4; 10.1 s measured
   exitStopOutsideM: number;       // spec §5 "about 2 m"; 2.0 m measured (probe S3)
@@ -148,7 +148,7 @@ export const DEFAULT_BEHAVIOUR: Readonly<Behaviour> = Object.freeze({
   commandDelayMinMs: 1_000,
   commandDelayMaxMs: 6_000,
   queueing: 'spec',
-  queuedDropProbability: 0.25,
+  queuedDropProbability: 0.5,
   deadmanMs: 500,
   leaseIdleTimeoutMs: 10_000,
   exitStopOutsideM: 2.0,

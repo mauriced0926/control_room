@@ -11,7 +11,7 @@
 //   radio faults (loss, duplicates, reordering, truncation) and acks (latency, loss): fake/radio.ts,
 //     once for the whole site, so every client sees the same stream (guessed: the live site's loss
 //     could be per client; one client cannot tell);
-//   accepted-then-ignored and pessimistic queue drops: where the model applies an effect;
+//   accepted-then-ignored and queued commands dropped: where the model accepts or applies a command;
 //   link drops and the slow reader: the gateway's connections;
 //   two zones, cancelled blasts, BAY closing: the blast schedule's probabilities.
 import type { Telemetry } from '../src/protocol.ts';
@@ -77,6 +77,7 @@ export interface Faults {
   ackLatency?: boolean;
   lostAcks?: boolean | CommandMatch;
   ignoredCommands?: boolean | CommandMatch;
+  queuedDrops?: boolean;       // a command queued behind LOADING / DUMPING / CHARGING never runs (re-probe Q1)
   linkDrops?: boolean | Array<{ atMs: number; durationMs: number }>;
   frozenMoving?: boolean | TruckTarget;
   frozenStationary?: boolean | TruckTarget; // the undetectable case (L4.R2c); not part of a live day
@@ -94,11 +95,12 @@ export interface Faults {
 // The live catalogue (research/README.md, CONTEXT.md "What the live site showed"): every day, one
 // truck each with a frozen message, silences, a seq reset, fractional SoC, malformed fields, a
 // skewed clock, a weak pack and a hydraulic fault; the radio's loss, duplicates, reordering and
-// truncation; slow and lost acks; link drops; and the blast schedule's cancellations and second
+// truncation; slow and lost acks, ignored commands and dropped queued ones; link drops; and the
+// blast schedule's cancellations and second
 // zones (on by default in the schedule).
 export const LIVE_DAY: Readonly<Faults> = Object.freeze({
   loss: true, duplicates: true, reordering: true, truncation: true,
-  ackLatency: true, lostAcks: true, ignoredCommands: true, linkDrops: true,
+  ackLatency: true, lostAcks: true, ignoredCommands: true, queuedDrops: true, linkDrops: true,
   frozenMoving: true, silent: true, seqReset: true, fractionalSoc: true, malformed: true, clockSkew: true,
   weakPack: true, hydPressureLow: true,
 });

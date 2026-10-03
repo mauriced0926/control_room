@@ -156,6 +156,7 @@ export class SiteModel {
   readonly #rngQueue: Rng;
   readonly #log: TruthLog;
   #telemetryFaults: TelemetryFaults | null = null;
+  #queuedDrops = false;
   readonly #randomBlasts: boolean;
   readonly #telemetryEvery: number;
   #blasts: Blast[] = [];
@@ -323,6 +324,11 @@ export class SiteModel {
 
   // ---- milestone 2's hooks for the fault injectors ----
 
+  // The queued-command-dropped injector, in the spec version too.
+  setQueuedDrops(on: boolean): void {
+    this.#queuedDrops = on;
+  }
+
   setTelemetryFaults(f: TelemetryFaults): void {
     this.#telemetryFaults = f;
   }
@@ -400,7 +406,11 @@ export class SiteModel {
     };
     if (action === 'RESUME') {
       // §5: RESUME cancels a queued command instead, at once (the controller has it in its queue).
+      // Guessed: untested live (re-probe Q3's truck had finished loading before the RESUME came).
       if (t.queued) { if (ignoredId !== null) return ignore(); t.queued = null; return ACCEPTED; }
+      // Seen once live (re-probe Q3, fixture resume-during-pending-hold): a command still within its
+      // 1-6 s delay cannot be called back. RESUME is INVALID_STATE and the pending one takes effect.
+      if (t.pending.length > 0) return reject('INVALID_STATE');
       if (t.state === 'HOLDING' || t.state === 'IDLE') {
         if (ignoredId !== null) return ignore();
         this.#schedule(t, { action, zoneId: null }, now);
@@ -416,10 +426,9 @@ export class SiteModel {
     }
     if (action === 'RETURN_TO_BAY' && this.#points.CHARGING.length === 0) return reject('INVALID_STATE');
     if (ignoredId !== null) return ignore();
-    if (isWork(t.state)) {
-      t.queued = { action, zoneId, due: now }; // one at a time: a newer one replaces the older
-      return ACCEPTED;
-    }
+    // Every supervisory command reaches the controller after its 1-6 s delay; one that arrives while
+    // the truck is loading, dumping or charging is queued then (#apply). Re-probe Q3: a HOLD sent in
+    // the last second of loading took effect 5.6 s after sending, not when loading ended.
     this.#schedule(t, { action, zoneId }, now);
     return ACCEPTED;
   }
@@ -434,7 +443,7 @@ export class SiteModel {
   #apply(t: Truck, e: Effect, now: number): void {
     if (t.state === 'MANUAL' || t.state === 'ESTOPPED' || t.state === 'FAULT') return;
     if (isWork(t.state)) {
-      if (e.action !== 'RESUME') t.queued = e;
+      if (e.action !== 'RESUME') t.queued = e; // one at a time: a newer one replaces the older (guessed: untested live)
       return;
     }
     switch (e.action) {
@@ -712,8 +721,10 @@ export class SiteModel {
     if (t.queued) {
       const q = t.queued;
       t.queued = null;
-      // L0.P pessimistic version: the queued command is sometimes dropped without notice.
-      if (this.#b.queueing === 'pessimistic' && this.#rngQueue.chance(this.#b.queuedDropProbability)) {
+      // Re-probe Q1 (fixture queued-hold-dropped): a queued HOLD was ACCEPTED and never carried out.
+      // The queued-drop injector does this at a rate; the L0.P pessimistic version always has it on.
+      const drawn = this.#rngQueue.chance(this.#b.queuedDropProbability);
+      if ((this.#b.queueing === 'pessimistic' || this.#queuedDrops) && drawn) {
         this.#log.event(now, t.id, 'queued_dropped', { action: q.action });
         return;
       }

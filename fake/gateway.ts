@@ -132,6 +132,7 @@ export class FakeGateway {
     const f = this.faults, b = this.behaviour, m = this.model, log = this.truthLog;
     const plan = planTrucks(f, m.site.vehicles, b, seed);
     const rng = new Rng(seed).fork('truck-faults');
+    m.setQueuedDrops(f.queuedDrops === true);
     if (plan.clockSkew) {
       // Every controller's clock is a little off; one is about an hour ahead.
       for (const v of m.site.vehicles) m.setDeviceOffset(v, Math.round(rng.uniform(-b.clockJitterMs, b.clockJitterMs)));
