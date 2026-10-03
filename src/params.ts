@@ -21,7 +21,7 @@ export const PARAMS = {
   manualSpeedLoadedFull: p(3.0, 'm/s', 'spec', 'PROTOCOL.md §3, manual at full throttle'),
   limpHomeSpeed: p(1.0, 'm/s', 'spec', 'PROTOCOL.md §6.6'),
   reverseSpeedEmpty: p(3.0, 'm/s', 'measured', 'research/README.md, probe S3: EXIT_ZONE reversed at 3.0 m/s'),
-  reverseSpeedLoaded: p(2.0, 'm/s', 'spec', 'assumed from the autonomous loaded speed; not measured (CONTEXT.md assumption 6)'),
+  reverseSpeedLoaded: p(2.0, 'm/s', 'measured', 'thinly: re-probe R1, 1.99 m/s by the truck\'s clock over only 2.4 m before it went silent (research/README.md); test 1.5 as the pessimistic case'),
 
   // Work cycle
   loadTime: p(20_000, 'ms', 'spec', 'PROTOCOL.md §3, loads for about 20 s'),

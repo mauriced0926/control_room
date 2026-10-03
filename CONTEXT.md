@@ -234,7 +234,8 @@ Do not wait on these. Assumptions below; record what the answers change.
    The 1–6 s execution delay means a race survives anyway; prefer a spurious
    hold over a missed evacuation. Time to clear = distance to the nearer
    boundary ÷ speed, plus up to 6 s to take effect. Reverse at 3.0 m/s empty
-   is measured; 2.0 m/s loaded is **assumed** from the spec, not measured.
+   is measured; 2.0 m/s loaded is measured only thinly (re-probe R1: over 2.4 m
+   before the truck went silent), so 1.5 m/s stays the pessimistic test case.
 7. **The CLOSED rule is unconditional** — it covers estopped, faulted and dead
    trucks. Not clear means not clear.
 8. **A blocked command surfaces to the lease holder,** not only to whoever
@@ -275,9 +276,12 @@ Do not wait on these. Assumptions below; record what the answers change.
     truck is still a hold. The exception is **queuing**: behind `LOADING`
     (~20 s), `DUMPING` (~12 s) or `CHARGING` (unbounded) the deadline has to
     depend on state, and a newer queued command replaces the older one — so
-    a retry must never displace a different command we queued. Queue
-    behaviour is **unverified** (the probe's S2 never ran); test it in the
-    fake gateway.
+    a retry must never displace a different command we queued. *(Re-probe,
+    2026-10-03:)* a `HOLD` queued behind loading was `ACCEPTED` and then never
+    carried out, and a command within its 1–6 s delay can't be cancelled by
+    `RESUME`. So queued commands are treated as unreliable: confirm when the
+    work ends, retry at once. Whether a newer queued command replaces an older
+    one is still untested (`research/README.md`).
 16. **Hold trucks before they enter a closing zone.** DECLINE takes ~167 s
     to cross against 120 s of notice, so a truck entering late cannot get
     through. *(Revised by answer 3:)* evacuation is per-truck. Spacing is out

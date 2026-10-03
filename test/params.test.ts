@@ -11,9 +11,9 @@ test('every parameter is a positive number with a source and a reference', () =>
   }
 });
 
-test('values the research marks as assumed are not labelled measured', () => {
-  assert.equal(PARAMS.reverseSpeedLoaded.source, 'spec');
-  assert.match(PARAMS.reverseSpeedLoaded.ref, /not measured/);
+test('a thinly measured value says how thin, so nobody mistakes it for a solid one', () => {
+  assert.equal(PARAMS.reverseSpeedLoaded.source, 'measured');
+  assert.match(PARAMS.reverseSpeedLoaded.ref, /thinly.*2\.4 m/);
 });
 
 test('the silent threshold leaves room inside the 10 s can\'t-clear budget', () => {
