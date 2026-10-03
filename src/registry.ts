@@ -190,7 +190,7 @@ export interface RegistryOptions {
   gate: SafetyGate;
   newId?: () => string;                                      // record ids
   commandIdFor?: (recordId: string, attempt: number) => string; // the gateway's command_id per attempt
-  systemOperatorId?: string;                                 // operator_id the gateway sees for the system
+  systemOperatorId?: string;                                 // prefix of the operator_id the gateway sees for the system: "<prefix>:<rule>"
   keepClosed?: number;                                       // closed records kept in memory
 }
 
@@ -448,7 +448,7 @@ export class CommandRegistry {
 
     const msg: CommandMessage = {
       type: 'command', command_id: attempt.commandId, vehicle_id: rec.vehicleId, action: rec.action,
-      operator_id: rec.actor.kind === 'operator' ? rec.actor.operatorId : this.#systemOperatorId,
+      operator_id: this.#operatorIdFor(rec.actor),
       ...(rec.force ? { force: true as const } : {}),
       ...(rec.action === 'RELEASE_CONTROL' && rec.leaseId ? { lease_id: rec.leaseId } : {}),
     };
@@ -550,12 +550,18 @@ export class CommandRegistry {
     return truck.state.atServerMs >= first.serverMs;
   }
 
+  // What the gateway's statutory log records as the operator. A system action carries its rule
+  // ("system:B3"), so the why is in the site's log as well as ours (answer 4).
+  #operatorIdFor(actor: Actor): string {
+    return actor.kind === 'operator' ? actor.operatorId : `${this.#systemOperatorId}:${actor.rule}`;
+  }
+
   #effect(rec: CommandRecord, t: TruckView): { done: boolean; detail: string; started?: string } {
     const no = { done: false, detail: '' };
     if (!this.#fresh(rec, t)) return no;
     const state = t.state!.value;
     const control = t.control?.value;
-    const opId = rec.actor.kind === 'operator' ? rec.actor.operatorId : this.#systemOperatorId;
+    const opId = this.#operatorIdFor(rec.actor);
     const zone = t.position && t.position.atServerMs >= rec.attempts[0]!.sends[0]!.serverMs ? t.position.value.zoneId : null;
     switch (rec.action) {
       case 'HOLD':

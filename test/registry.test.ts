@@ -555,7 +555,7 @@ test('L8.3 an operator_id in the request is ignored; the caller\'s identity is u
     r.registry.submit({ vehicleId: V, action: 'HOLD', operator_id: 'mallory' } as never, PRIYA);
     assert.equal(r.sent[0]!.operator_id, 'priya');
     r.registry.submit({ vehicleId: 'HT-05', action: 'HOLD', operator_id: 'mallory' } as never, BLAST);
-    assert.equal(r.sent[1]!.operator_id, 'system');
+    assert.equal(r.sent[1]!.operator_id, 'system:blast-evacuation', 'the system carries its rule into the statutory log');
     assert.ok(!JSON.stringify(r.store.auditLog()).includes('mallory'));
   } finally { r.cleanup(); }
 });
