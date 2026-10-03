@@ -69,7 +69,7 @@ export interface Behaviour {
   // captures; "1 of N" values are single observations.
 
   // Radio, telemetry only (heartbeats, zone events and lease events arrived complete and on time live)
-  lossProbability: number;        // measured: 2.9-3.4 % of seqs never arrived (incl. truncated), runs of 1, rarely 2 or 3
+  lossProbability: number;        // measured: 3.2-3.4 % of seqs never arrived, truncated lines included (test/helpers/radio-stats.ts); runs of 1, rarely 2 or 3
   duplicateProbability: number;   // measured: 1.97-2.09 %, always byte-identical
   duplicateMaxDelayMs: number;    // measured: the copy arrived 0-900 ms after the first (p90 826 ms)
   lateProbability: number;        // measured: 4.89-5.09 % arrived behind a higher seq
@@ -172,7 +172,7 @@ export const DEFAULT_BEHAVIOUR: Readonly<Behaviour> = Object.freeze({
   secondZoneOffsetMs: 30_000,
   blastBay: false,
 
-  lossProbability: 0.028,
+  lossProbability: 0.03,
   duplicateProbability: 0.02,
   duplicateMaxDelayMs: 900,
   lateProbability: 0.05,
