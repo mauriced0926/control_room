@@ -275,6 +275,19 @@ test('link drops at random: the first lands in a blast notice, later ones every 
   assert.equal(inNotice, 5, 'every first drop lands in a notice');
 });
 
+test('link stall: the connection stays open but nothing arrives for a while, heartbeats included (fixture loaded-reverse-into-silence)', () => {
+  const h = harness({ faults: { linkStalls: [{ atMs: 10_000, durationMs: 26_000 }] } });
+  h.advance(60_000);
+  assert.ok(!h.client.closed);
+  const hb = h.messages('heartbeat').map((m) => m.server_time_ms - T0);
+  assert.ok(hb.includes(8_000) && !hb.some((t) => t >= 10_000 && t < 36_000) && hb.includes(36_000), hb.join(','));
+  const tel = h.telemetry('HT-01');
+  const i = tel.findIndex((t) => t.t_device_ms > T0 + 10_000);
+  assert.ok(tel[i]!.t_device_ms >= T0 + 36_000);
+  assert.ok(tel[i]!.seq - tel[i - 1]!.seq > 100, 'the trucks carried on counting: their messages were lost, not held back');
+  assert.deepEqual(h.gw.truthLog.entries({ fault: 'link_stall' }).map((e) => [e.atMs - T0, e.untilMs! - T0]), [[10_000, 36_000]]);
+});
+
 // ---- per-truck telemetry faults ----
 
 test('frozen while moving: the whole message repeats with seq and the device clock advancing; the truck really moves on', () => {
@@ -329,6 +342,13 @@ test('silent truck: nothing for 24-55 s at a time, seq not advancing across it, 
   assert.equal(log[0]!.atMs, T0 + 10_000);
   const hb = h.messages('heartbeat');
   assert.equal(hb.length, 300, 'the link stayed up');
+});
+
+test('silent truck: the first silence can be pinned to a length', () => {
+  const h = harness({ faults: { silent: { vehicle: 'HT-05', atMs: 10_000, forMs: 41_000 } } });
+  h.advance(60_000);
+  const [e] = h.gw.truthLog.entries({ fault: 'silent' });
+  assert.deepEqual([e!.atMs - T0, e!.untilMs! - T0], [10_000, 51_000]);
 });
 
 test('seq reset: seq drops to 1 while the device clock carries on (fixture seq-reset)', () => {

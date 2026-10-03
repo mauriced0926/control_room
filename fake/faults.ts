@@ -22,7 +22,7 @@ export type FaultClass =
   | 'link_drop' | 'lost_ack' | 'accepted_ignored' | 'queued_dropped'
   | 'frozen_moving' | 'frozen_stationary' | 'silent' | 'seq_reset' | 'truncated' | 'fractional_soc'
   | 'malformed' | 'clock_skew' | 'duplicate' | 'late' | 'lost'
-  | 'weak_pack' | 'fault' | 'two_zones' | 'cancelled_blast' | 'bay_closing' | 'slow_reader';
+  | 'weak_pack' | 'fault' | 'two_zones' | 'cancelled_blast' | 'bay_closing' | 'slow_reader' | 'link_stall';
 
 // One thing that was really wrong. `untilMs` is null while it lasts (to the end of the day, for a
 // frozen truck); a one-off event has untilMs equal to atMs.
@@ -64,7 +64,8 @@ export class TruthLog {
 }
 
 // A per-truck injector's target. Either part left out is drawn from the seed and the measured range.
-export interface TruckTarget { vehicle?: string; atMs?: number }
+// `forMs` pins the length of the first silence (silent truck only).
+export interface TruckTarget { vehicle?: string; atMs?: number; forMs?: number }
 
 // Which commands a command fault applies to: by order received (n from 1), id, vehicle or action.
 export type CommandMatch = (c: { n: number; command_id: string; vehicle_id: string; action: string }) => boolean;
@@ -79,6 +80,9 @@ export interface Faults {
   ignoredCommands?: boolean | CommandMatch;
   queuedDrops?: boolean;       // a command queued behind LOADING / DUMPING / CHARGING never runs (re-probe Q1)
   linkDrops?: boolean | Array<{ atMs: number; durationMs: number }>;
+  // The connection stays open but nothing arrives, heartbeats included (fixture
+  // loaded-reverse-into-silence: 26 s, once). Explicit times only: one sample, no rate.
+  linkStalls?: Array<{ atMs: number; durationMs: number }>;
   frozenMoving?: boolean | TruckTarget;
   frozenStationary?: boolean | TruckTarget; // the undetectable case (L4.R2c); not part of a live day
   silent?: boolean | TruckTarget;
@@ -116,7 +120,7 @@ const TRUCK_CLASSES = [
 ] as const;
 export type TruckClass = (typeof TRUCK_CLASSES)[number];
 
-export interface TruckPlan { vehicle: string; atMs: number }
+export interface TruckPlan { vehicle: string; atMs: number; forMs?: number }
 
 // Resolve which truck and when, for every per-truck injector that is on. Its own random stream, so
 // switching one injector on never moves another's truck or time.
@@ -141,7 +145,7 @@ export function planTrucks(faults: Faults, vehicles: readonly string[], b: Behav
     if (!f) continue;
     const target = typeof f === 'object' ? f : {};
     if (target.vehicle !== undefined && !vehicles.includes(target.vehicle)) throw new Error(`fault ${c}: no truck ${target.vehicle}`);
-    plan[c] = { vehicle: target.vehicle ?? deal, atMs: target.atMs ?? Math.round(draw) };
+    plan[c] = { vehicle: target.vehicle ?? deal, atMs: target.atMs ?? Math.round(draw), ...(target.forMs !== undefined ? { forMs: target.forMs } : {}) };
   }
   return plan;
 }
@@ -173,7 +177,7 @@ export class TelemetryFaults {
     this.#rng = new Rng(seed).fork('telemetry-faults');
     this.#startMs = startMs;
     const s = plan.silent;
-    if (s) this.#silence = { vehicle: s.vehicle, from: startMs + s.atMs, until: startMs + s.atMs + this.#silentFor(), entry: null };
+    if (s) this.#silence = { vehicle: s.vehicle, from: startMs + s.atMs, until: startMs + s.atMs + (s.forMs ?? this.#silentFor()), entry: null };
   }
 
   #silentFor(): number { return Math.round(this.#rng.uniform(this.#b.silentMinMs, this.#b.silentMaxMs)); }

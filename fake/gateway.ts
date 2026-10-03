@@ -85,6 +85,7 @@ export class FakeGateway {
   readonly #timers: TimerHandle[] = [];
   #commandCount = 0;
   #linkDown: TruthEntry | null = null;
+  #stalled: TruthEntry | null = null;
   #linkDropPlanned = false; // the first random drop waits for a CLOSING; later ones follow on
 
   constructor(clock: Clock, config: FakeConfig) {
@@ -108,6 +109,12 @@ export class FakeGateway {
     this.model.start();
     const lf = this.faults.linkDrops;
     if (Array.isArray(lf)) for (const d of lf) this.#later(d.atMs, () => this.#linkDrop(d.durationMs));
+    for (const st of this.faults.linkStalls ?? []) {
+      this.#later(st.atMs, () => {
+        this.#stalled = this.truthLog.start(this.#clock.now(), null, 'link_stall', { durationMs: st.durationMs });
+        this.#later(st.durationMs, () => { if (this.#stalled) this.#stalled.untilMs = this.#clock.now(); this.#stalled = null; });
+      });
+    }
   }
 
   stop(): void {
@@ -312,6 +319,7 @@ export class FakeGateway {
 
   // Every authenticated client gets every line. Nothing is queued for a disconnected client (§1).
   #fanOut(line: string): void {
+    if (this.#stalled) return; // a stalled link delivers nothing, and nothing is kept for later
     for (const c of [...this.#conns]) if (c.authed && !c.closed) c.write(line);
   }
 }
