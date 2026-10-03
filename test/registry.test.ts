@@ -58,6 +58,8 @@ test('L2.30 ack before the effect, and effect before the ack: both end confirmed
     const after = r.registry.get(b.id)!;
     assert.equal(after.status, 'confirmed');
     assert.equal(after.attempts[0]!.ack?.status, 'ACCEPTED', 'the late ack is still recorded');
+    assert.equal(after.effect!.ackReceived, true, 'and it is no longer shown as "no ack received"');
+    assert.doesNotMatch(after.summary, /no ack/);
   } finally { r.cleanup(); }
 });
 

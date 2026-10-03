@@ -456,7 +456,9 @@ export class CommandRegistry {
     const send: SendInfo = { atMs: now, serverMs: this.#fleet.serverNow(), replay, ackRxMs: null };
     attempt.sends.push(send);
     this.#book.sent(attempt.commandId, now);
-    if (rec.status === 'pending') rec.status = 'sent';
+    // A new attempt has not been acknowledged yet, whatever the last one got. A replay keeps its
+    // status: it is the same command, and the gateway will answer it with the original result.
+    if (rec.status === 'pending' || kind === 'retry') rec.status = 'sent';
     rec.hold = null;
     rec.pendingRefusal = null;
     if (replay) {
@@ -694,6 +696,9 @@ export class CommandRegistry {
       this.#setLease({ vehicleId: rec.vehicleId, operatorId: rec.actor.operatorId, leaseId: info.leaseId, sinceServerMs: this.#fleet.serverNow() });
     }
     const current = attempt === rec.attempts.at(-1);
+    if (rec.status === 'confirmed' && status === 'ACCEPTED' && rec.effect && !rec.effect.ackReceived) {
+      rec.effect.ackReceived = true; // the ack came after the effect (L2.30): no longer "no ack received"
+    }
     if (!OPEN_STATUSES.has(rec.status) || !current) {
       this.#save(rec, 'ack', `${status}${info.reason ? ` ${info.reason}` : ''} for ${cid} after the command was ${current ? rec.status : 'sent again'}`, undefined, cid);
       return;
