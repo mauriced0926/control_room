@@ -3,7 +3,8 @@
 //   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=127.0.0.1 \
 //     -addext subjectAltName=IP:127.0.0.1 -keyout key.pem -out cert.pem
 //   node fake/main.ts --key key.pem --cert cert.pem [--port 7443] [--seed 1] [--blasts random|none]
-//                     [--fault <vehicle>:<code> ...]
+//                     [--fault <vehicle>:<code> ...] [--day live|perfect]
+// --day live switches on every injector of a live day (fake/faults.ts LIVE_DAY); the default is perfect.
 //
 // Then point a client at it with GATEWAY_HOST=127.0.0.1, GATEWAY_PORT and SSL_CERT_FILE=cert.pem.
 // The default site is DLH-1 (fake/dlh1.ts). Never point a probe at the real gateway by accident:
@@ -14,6 +15,7 @@ import { SystemClock } from '../src/clock.ts';
 import { FakeGateway } from './gateway.ts';
 import { DLH1 } from './dlh1.ts';
 import { listenTls } from './tls.ts';
+import { LIVE_DAY } from './faults.ts';
 
 const { values } = parseArgs({
   options: {
@@ -24,6 +26,7 @@ const { values } = parseArgs({
     seed: { type: 'string', default: '1' },
     blasts: { type: 'string', default: 'random' },
     fault: { type: 'string', multiple: true, default: [] },
+    day: { type: 'string', default: 'perfect' },
   },
 });
 if (!values.key || !values.cert) {
@@ -35,7 +38,11 @@ if (values.blasts !== 'random' && values.blasts !== 'none') {
   process.exit(2);
 }
 
-const gw = new FakeGateway(new SystemClock(), { seed: Number(values.seed), site: DLH1, blasts: values.blasts });
+if (values.day !== 'live' && values.day !== 'perfect') {
+  console.error(`--day must be live or perfect, not ${values.day}`);
+  process.exit(2);
+}
+const gw = new FakeGateway(new SystemClock(), { seed: Number(values.seed), site: DLH1, blasts: values.blasts, ...(values.day === 'live' ? { faults: LIVE_DAY } : {}) });
 for (const f of values.fault) {
   const [vehicle, code] = f.split(':');
   if (!vehicle || !code) { console.error(`--fault wants VEHICLE:CODE, not ${f}`); process.exit(2); }
