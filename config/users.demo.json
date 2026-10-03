@@ -1,0 +1,8 @@
+{
+  "note": "DEMO users, for evaluating this build only. Their plain passwords are written in README.md, so anyone can log in as them: replace this file (USERS_FILE) before real use. Hashes are made with: node src/users.ts hash",
+  "users": [
+    { "id": "priya", "name": "Priya", "role": "operator", "passwordHash": "scrypt$32768$8$3$r9NRSK4kkmmK9rKXFb8_Lg$W-heCUonw0hc-LNtJ2rb9pZKFNXYH8tWslm_A8cqpo7nHf_mi-kVq5QJY82m7eDLDyHpfVWgOJqRWnOlstZbcQ" },
+    { "id": "dave", "name": "Dave", "role": "operator", "passwordHash": "scrypt$32768$8$3$h3bNmJut1CKjOOeaOMlxQw$2PNT-HCwKAC3ehksTvXInx9epdsKnyNYIhgQSRPWCq3hUpenbdVcsGKmm2oTuIVJn_sEFAas3qAC2r143nPBFw" },
+    { "id": "marta", "name": "Marta", "role": "supervisor", "passwordHash": "scrypt$32768$8$3$xZBWy4DffRaKZ9rCKtOBfA$J5-MvdFWqRNbjgpfzadCwRJVSVJOqZgFqAm0fKSNxfD7i-4UMHb0Ik06zimPp13brhOk8gGkb9-YjBXRppZLig" }
+  ]
+}
