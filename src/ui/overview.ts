@@ -121,7 +121,7 @@ export function socView(t: TruckView): { text: string; flags: string[] } {
     flags.push(`draining ${r.toFixed(1)}× faster than the fleet`);
   }
   if (b.warning === 'DEPLETED') flags.push('depleted: needs a tow');
-  else if (b.warning === 'CANNOT_REACH_BAY') flags.push("can't reach the bay on this charge");
+  else if (b.warning === 'CANNOT_REACH_BAY') flags.push('may not reach the bay on this charge');
   else if (b.warning === 'WONT_FINISH_LAP') flags.push("won't finish its lap: return to bay now");
   return { text, flags };
 }
