@@ -254,10 +254,9 @@ test('L0.C1 link-drop-in-notice: the link drops just after a CLOSING, logins are
 
 test('L0.C1 weak-pack: one truck draining ~5x the fleet stops with BATTERY_DEPLETED in the incline', C1, () => {
   const fx = fixtureReport('weak-pack');
-  // research/report.py fails on this fixture after printing every truck: the thinned fixture leaves
-  // trucks with a drain of None, and statistics.median cannot sort None. Its per-truck output, which
-  // is what this compares, is complete. Not fixed here: research/ is not this task's to change.
-  assert.match(fx.stderr, /TypeError: '<' not supported between instances of 'NoneType' and 'float'/);
+  // research/report.py used to crash on this fixture (a median over trucks with no drain figure); it
+  // now runs to the end. The comparison is still the per-truck output.
+  assert.equal(fx.stderr, '');
   const fk = fakeReport({ trucks: [{ vehicle_id: 'HT-06', positionM: 100, loaded: false }], faults: { weakPack: { vehicle: 'HT-06' } }, ms: 560_000 });
   for (const r of [fx, fk]) {
     assert.ok(events(r, 'HT-06').includes('FAULT BATTERY_DEPLETED'), events(r, 'HT-06').join(' > '));
@@ -303,11 +302,14 @@ test('L0.C1 resume-during-pending-hold: RESUME during the HOLD\'s delay is INVAL
   }
 });
 
-test('L0.C1 loaded-reverse-into-silence: EXIT_ZONE reverses a loaded truck, it goes silent (and the link stalls), and reappears holding', C1, () => {
+test('L0.C1 loaded-reverse-into-silence: EXIT_ZONE reverses a loaded truck, it goes silent, the link drops, and it reappears holding', C1, () => {
   const fx = fixtureReport('loaded-reverse-into-silence');
   const fk = fakeReport({
     trucks: [{ vehicle_id: 'HT-04', positionM: 887, loaded: true, socPct: 61.5 }],
-    faults: { ackLatency: true, silent: { vehicle: 'HT-04', atMs: 9_000, forMs: 40_500 }, linkStalls: [{ atMs: 24_010, durationMs: 25_990 }] },
+    // Live: HT-04 alone went quiet ~15 s with the link up, then the gateway closed the connection and
+    // refused logins until the fifth attempt (closed_by_peer at +24 s; hello at +49 s, after retries
+    // at 2, 4, 8 and 10 s). A drop, not a stall: the outage ends before that fifth attempt.
+    faults: { ackLatency: true, silent: { vehicle: 'HT-04', atMs: 9_000, forMs: 40_500 }, linkDrops: [{ atMs: 24_010, durationMs: 23_000 }] },
     script: (at, send) => {
       at(4_000, () => send('HT-04', 'EXIT_ZONE', 'x1'));
       at(49_500, () => send('HT-04', 'RESUME', 'x2'));
@@ -317,7 +319,8 @@ test('L0.C1 loaded-reverse-into-silence: EXIT_ZONE reverses a loaded truck, it g
   for (const r of [fx, fk]) {
     assert.match(flag(r, 'HT-04', 'SILENT') ?? '', /\s(39|40|41)s$/);
     assert.deepEqual(events(r, 'HT-04'), ['TRAMMING TASK=EXIT_ZONE', 'HOLDING']);
-    assert.match(r.heartbeatGaps, /, 26\.\d\)\]$/);
+    assert.match(r.heartbeatGaps, /, 2[4-7]\.\d\)\]$/);
+    assert.ok(r.text.split('\n').filter((l) => /closed_by_peer/.test(l)).length >= 3, 'logins accepted then closed during the drop');
   }
 });
 

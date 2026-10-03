@@ -80,8 +80,9 @@ export interface Faults {
   ignoredCommands?: boolean | CommandMatch;
   queuedDrops?: boolean;       // a command queued behind LOADING / DUMPING / CHARGING never runs (re-probe Q1)
   linkDrops?: boolean | Array<{ atMs: number; durationMs: number }>;
-  // The connection stays open but nothing arrives, heartbeats included (fixture
-  // loaded-reverse-into-silence: 26 s, once). Explicit times only: one sample, no rate.
+  // The connection stays open but nothing arrives, heartbeats included. Not seen live: it was built
+  // from a misreading of loaded-reverse-into-silence, which was a link drop (the fixture had left out
+  // the connection events). Kept as a transport failure worth testing. Explicit times only.
   linkStalls?: Array<{ atMs: number; durationMs: number }>;
   frozenMoving?: boolean | TruckTarget;
   frozenStationary?: boolean | TruckTarget; // the undetectable case (L4.R2c); not part of a live day

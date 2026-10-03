@@ -279,7 +279,7 @@ test('link drops at random: the first lands in a blast notice, later ones every 
   assert.equal(inNotice, 5, 'every first drop lands in a notice');
 });
 
-test('link stall: the connection stays open but nothing arrives for a while, heartbeats included (fixture loaded-reverse-into-silence)', () => {
+test('link stall: the connection stays open but nothing arrives for a while, heartbeats included (not seen live)', () => {
   const h = harness({ faults: { linkStalls: [{ atMs: 10_000, durationMs: 26_000 }] } });
   h.advance(60_000);
   assert.ok(!h.client.closed);
