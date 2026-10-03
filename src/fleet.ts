@@ -41,6 +41,7 @@ export interface TruckView {
   lastMessageServerMs: number | null;
   ageMs: number | null; // since the last accepted message
   state: Known<VehicleState> | null;
+  stateSinceServerMs: number | null; // when the reported state last changed, as far as we saw it
   task: Known<Task | null> | null;
   socPct: Known<number> | null; // as the pack reported it, never scaled
   socFractional: boolean;
@@ -73,8 +74,15 @@ export interface ZoneView {
   trucksMightBeIn: string[];
 }
 
+export interface LinkView {
+  up: boolean | null; // null: no link has been reported yet
+  sinceServerMs: number | null;
+  reason: string;
+}
+
 export interface FleetSnapshot {
   atServerMs: number;
+  link: LinkView;
   siteId: string | null;
   loopLengthM: number | null;
   heartbeat: { lastServerMs: number | null; ageMs: number | null; stale: boolean };
@@ -120,6 +128,7 @@ class Truck {
   restarts = 0;
   lastAccepted: number | null = null;
   state?: Stored<VehicleState>;
+  stateSince: number | null = null;
   task?: Stored<Task | null>;
   soc?: Stored<number>;
   socFractional = false;
@@ -166,6 +175,7 @@ export class FleetState {
   #dqConnection: Record<string, number> = {};
   #listeners = new Set<(e: FleetEvent) => void>();
   #timer: TimerHandle | null = null;
+  #link: { up: boolean; sinceLocal: number; reason: string } | null = null;
 
   constructor(clock: Clock) {
     this.#clock = clock;
@@ -182,6 +192,23 @@ export class FleetState {
   // recent samples, because delay in transit only ever makes a sample too small.
   serverNow(): number {
     return this.#clock.now() + this.#offset();
+  }
+
+  // The gateway link says whether it is up (TESTING.md L2.43). While it is down nothing is shown as
+  // live, however recent its last message: the picture is ageing and nobody can see it change.
+  setLink(up: boolean, reason: string): void {
+    if (this.#link && this.#link.up === up && this.#link.reason === reason) return;
+    if (!this.#link || this.#link.up !== up) this.#link = { up, sinceLocal: this.#clock.now(), reason };
+    else this.#link.reason = reason;
+    this.tick();
+  }
+
+  // One truck's view, without building the whole snapshot. Undefined for a truck never heard of.
+  truck(vehicleId: string): TruckView | undefined {
+    const t = this.#trucks.get(vehicleId);
+    if (!t) return undefined;
+    const fleet = this.#fleetDrain();
+    return this.#view(t, this.#clock.now(), fleet);
   }
 
   // A new connection to the gateway: per-connection counts start again.
@@ -239,8 +266,10 @@ export class FleetState {
     });
     const hb = this.#lastHeartbeat;
     const hbAge = hb ? now - hb.atLocal : null;
+    const link = this.#link;
     return {
       atServerMs: this.serverNow(),
+      link: { up: link?.up ?? null, sinceServerMs: link ? link.sinceLocal + this.#offset() : null, reason: link?.reason ?? 'not connected yet' },
       siteId: site?.siteId ?? null,
       loopLengthM: site?.loopLengthM ?? null,
       heartbeat: { lastServerMs: hb?.serverMs ?? null, ageMs: hbAge, stale: hbAge === null || hbAge >= PARAMS.linkDownAfter.value },
@@ -395,6 +424,7 @@ export class FleetState {
     const set = <K extends 'state' | 'task' | 'speed' | 'direction' | 'payload' | 'faults' | 'control' | 'position'>(k: K, v: Truck[K] extends Stored<infer T> | undefined ? T | undefined : never) => {
       if (v !== undefined) (t as unknown as Record<string, unknown>)[k] = { value: v, atLocal: at };
     };
+    if (f.state !== undefined && t.state?.value !== f.state) t.stateSince = at;
     set('state', f.state);
     set('task', f.task);
     set('speed', f.speedMps);
@@ -500,6 +530,8 @@ export class FleetState {
     const posAge = now - t.position.atLocal;
     if (posAge >= silent) return { c: 'silent', reason: `no valid position for ${secs(posAge)}; messages still arriving` };
     if (posAge >= old) return { c: 'old', reason: `last position ${secs(posAge)} ago` };
+    const link = this.#link;
+    if (link && !link.up) return { c: 'old', reason: `site link down for ${secs(now - link.sinceLocal)}; last position ${secs(posAge)} ago` };
     return { c: 'live', reason: 'reporting normally' };
   }
 
@@ -589,6 +621,7 @@ export class FleetState {
       lastMessageServerMs: t.lastAccepted === null ? null : t.lastAccepted + off,
       ageMs: t.lastAccepted === null ? null : now - t.lastAccepted,
       state: known(t.state),
+      stateSinceServerMs: t.stateSince === null ? null : t.stateSince + off,
       task: known(t.task),
       socPct: known(t.soc),
       socFractional: t.socFractional,

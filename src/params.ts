@@ -6,7 +6,7 @@ export type Source = 'spec' | 'measured' | 'decided';
 
 export interface Param {
   readonly value: number;
-  readonly unit: 'm/s' | 'ms' | 'm' | '%' | 'count' | 'ratio';
+  readonly unit: 'm/s' | 'ms' | 'm' | '%' | '%/s' | 'count' | 'ratio';
   readonly source: Source;
   readonly ref: string;
 }
@@ -61,6 +61,21 @@ export const PARAMS = {
   fleetMinTrucks: p(3, 'count', 'decided', 'a fleet median needs at least 3 other trucks with enough evidence'),
   loadedDrainFactor: p(1.5, 'ratio', 'measured', 'fleet median 9.0 %/km loaded against 6.0 empty (weak-pack fixture); used only until the fleet itself gives a ratio'),
   batteryReserveFactor: p(1.25, 'ratio', 'decided', 'warn when charge is below 1.25x the estimated need, so the warning comes while there is still time to act'),
+
+  // Gateway link (task 3)
+  linkBackoffBase: p(500, 'ms', 'decided', 'first retry after a drop; doubles per failed attempt. The live capture tool used 2 s doubling to 10 s and reconnected cleanly'),
+  linkBackoffMax: p(5_000, 'ms', 'decided', 'cap: once the site link returns we reconnect within 5 s, so a 21-49 s live outage costs at most 5 s more of a 120 s blast notice'),
+  linkBackoffBusyBase: p(5_000, 'ms', 'decided', 'TOO_MANY_CONNECTIONS and SERVER_FULL (PROTOCOL.md §1.1, "try again shortly"): the gateway is loaded, so start slower'),
+  linkBackoffBusyMax: p(30_000, 'ms', 'decided', 'cap for a loaded gateway; the link status says why we are waiting'),
+  helloTimeout: p(5_000, 'ms', 'decided', 'a login with no hello within 5 s is an outage; live, hello came 85 ms after connecting and outage logins closed within 52 ms (link-drop-in-notice)'),
+
+  // Command registry (task 4)
+  commandUplinkAllowance: p(500, 'ms', 'measured', 'the gateway stamped all 11 fixture acks 43-58 ms after the probe sent (probe clock against gateway clock, so uplink plus their offset); about 10x margin. Acks themselves arrived 0.31-2.58 s after sending'),
+  immediateEffectDeadline: p(3_000, 'ms', 'decided', 'ESTOP and lease operations take effect on receipt (PROTOCOL.md §5): uplink plus telemetry latency (1.5 s) plus margin'),
+  commandMaxAttempts: p(3, 'count', 'decided', 'one accepted-then-ignored plus one more; both live retries worked first time (research/README.md). 3 x 8 s fits well inside a 120 s notice'),
+  estopMaxAttempts: p(5, 'count', 'decided', 'an e-stop is worth more tries; 5 x 3 s is still 15 s'),
+  chargeRate: p(0.1, '%/s', 'decided', 'guessed: no CHARGING was ever captured; Sam\'s "ten-minute charge". Used only for an estimate, never a deadline'),
+  reconnectVerifyGrace: p(2_500, 'ms', 'decided', 'after a reconnect, a command too old to replay is checked against telemetry for this long (latency 1.5 s plus margin) before it is marked expired'),
 
   // Blast safety and operator attention
   cantClearAlarmWithin: p(10_000, 'ms', 'decided', 'CLAUDE.md invariant 5; TESTING.md L4.R1'),
