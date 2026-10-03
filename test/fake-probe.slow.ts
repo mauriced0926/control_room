@@ -83,9 +83,9 @@ type Rec = { kind: string; rx_ms: number; name?: string; raw?: string; m?: Gatew
 // reverse-exit-zone), and what the spec says where the live run lost the ack or left no record.
 // Each entry: [action, 'ACCEPTED' or the rejection reason].
 const EXPECTED: Record<string, Array<[string, string]>> = {
-  // live: the first HOLD's ack was lost on the radio; the fake has no loss in milestone 1, so the
-  // spec's ACCEPTED. Resend: original ACCEPTED (verified). Reuse: COMMAND_ID_REUSED (verified).
-  S1: [['HOLD', 'ACCEPTED'], ['HOLD', 'ACCEPTED'], ['RESUME', 'COMMAND_ID_REUSED'], ['RESUME', 'ACCEPTED']],
+  // live: the first HOLD's ack was lost on the radio, and the fake loses it too (lost-ack injector on
+  // the first command). Resend: original ACCEPTED (verified). Reuse: COMMAND_ID_REUSED (verified).
+  S1: [['HOLD', 'NO_ACK'], ['HOLD', 'ACCEPTED'], ['RESUME', 'COMMAND_ID_REUSED'], ['RESUME', 'ACCEPTED']],
   S3: [['EXIT_ZONE', 'ACCEPTED'], ['RESUME', 'ACCEPTED']], // live: probe-119b43-5 and -6, both ACCEPTED
   // live: TAKE_CONTROL ACCEPTED with lease details, HOLD LEASE_HELD (holder probe), RESUME ACCEPTED
   // (and then ignored for 70 s: an ACCEPTED-then-ignored fault, milestone 2)
@@ -106,7 +106,8 @@ interface Send { at: number; step: string; id: string; action: string; vehicle: 
 // record (the probe writes 'sent' just after the bytes leave), so when that latest send is already
 // answered, the ack belongs to the next send of the id. No time window: sends of one id are 50 ms
 // apart in S1, and an earlier version of this with a 50 ms window misattributed them.
-// Milestone 1 loses no acks; once milestone 2 loses some, this pairing must be revisited.
+// With milestone 2's ack latency (150 ms-2.6 s) the localhost race no longer arises, and a lost ack
+// leaves its send unanswered: the probe waits for each ack before its next send of the same id.
 function pairAcks(recs: Rec[]): Send[] {
   const sends: Send[] = [];
   let step = '';
@@ -142,7 +143,8 @@ const outcome = (a: CommandAck | null) => (a === null ? 'NO_ACK' : a.status === 
 test('L0.C2 research/probe.py gets the live ack sequence from the fake for S1 and S3-S8', { skip: !HAVE_OPENSSL || !HAVE_PYTHON ? 'needs python3 and openssl' : false, timeout: 600_000 }, async (t) => {
   const { dir, key, cert, certPath } = makeCert(t);
   const faulted = DLH1.vehicles.at(-1)!; // S8 needs a truck in FAULT
-  const gw = new FakeGateway(new SystemClock(), { seed: 11, site: DLH1, blasts: 'none' });
+  // Acks as slow as live, and S1's first ack lost as it was live: the first command the probe sends.
+  const gw = new FakeGateway(new SystemClock(), { seed: 11, site: DLH1, blasts: 'none', faults: { ackLatency: true, lostAcks: (c) => c.n === 1 } });
   gw.injectFault(faulted, 'HYD_PRESSURE_LOW');
   gw.start();
   const server = await listenTls(gw, { key, cert });
@@ -186,11 +188,13 @@ test('L0.C2 research/probe.py gets the live ack sequence from the fake for S1 an
     .map((r) => ({ rx: r.rx_ms, m: r.m as Telemetry }));
   const send = (step: string, action: string) => sends.find((s) => s.step === step && s.action === action)!;
 
-  // S1: HOLD took effect 1-6 s after it was accepted (live: 3.2 s), on the gateway's clock (see S4),
-  // plus up to 200 ms of telemetry sampling and the real clock's late timers.
+  // S1: HOLD took effect 1-6 s after it was sent (live: 3.2 s), though its ack was lost, timed from
+  // the probe's send record to the truck's clock (the gateway's, with no skew injected), plus up to
+  // 200 ms of telemetry sampling and the real clock's late timers.
   const hold = send('S1', 'HOLD');
+  assert.equal(hold.ack, null);
   const held = tele(hold.vehicle!).find((x) => x.rx > hold.rx && x.m.state === 'HOLDING')!;
-  const toHold = held.m.t_device_ms - hold.ack!.server_time_ms;
+  const toHold = held.m.t_device_ms - hold.rx;
   assert.ok(toHold >= 1_000 && toHold <= 6_500, `S1 HOLD took effect ${toHold} ms after acceptance`);
 
   // S3: EXIT_ZONE at the autonomous speed for its load, stopping 2.0 m outside the zone (live: 3.0 m/s
