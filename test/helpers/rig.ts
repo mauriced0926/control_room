@@ -50,23 +50,59 @@ export function rig(hello: Hello | null = helloAt(T0)): Rig {
 // fed as the lines they arrived as, unparseable lines as their raw text. `onRecord` runs after each.
 // Records are sorted by rx_ms (stably) first, as a guard: research/trim.py once wrote multi-part
 // fixtures part by part, out of arrival order. It now sorts them.
-export function replay(records: FixtureRecord[], opts: { hello?: boolean; onRecord?: (r: FixtureRecord, f: FleetState, c: ManualClock) => void } = {}) {
-  const body = records.filter((r) => r.kind !== 'fixture' && typeof r.rx_ms === 'number').sort((a, b) => a.rx_ms! - b.rx_ms!);
-  const start = body[0]!.rx_ms!;
-  const clock = new ManualClock(start);
-  const fleet = new FleetState(clock);
-  const events: FleetEvent[] = [];
-  fleet.subscribe((e) => events.push(e));
-  if (opts.hello !== false) fleet.ingest(helloAt(start));
-  for (const r of body) {
-    clock.advance(Math.max(0, r.rx_ms! - clock.now()));
-    if (r.kind === 'msg') fleet.ingestLine(JSON.stringify(r.m));
-    else if (r.kind === 'unparseable') fleet.ingestLine(String(r.raw));
-    else if (r.kind === 'connected') fleet.newConnection();
-    fleet.tick();
-    opts.onRecord?.(r, fleet, clock);
+//
+// Incremental, for the fixture player (player/): advanceTo() feeds every record up to a moment and
+// then moves the clock to it, so the picture ages between records as it would live. Records the
+// product never receives ('sent', 'closed_by_peer') only move the clock.
+export class Replayer {
+  readonly records: FixtureRecord[];
+  readonly start: number;
+  readonly end: number;
+  readonly clock: ManualClock;
+  readonly fleet: FleetState;
+  readonly events: FleetEvent[] = [];
+  readonly #onRecord: ((r: FixtureRecord, f: FleetState, c: ManualClock) => void) | undefined;
+  #next = 0;
+
+  // `hello`: the hello to start from. By default this site's, re-timed to the first record with every
+  // zone open (helloAt); null for none, when the fixture carries its own.
+  constructor(records: FixtureRecord[], opts: { hello?: Hello | null; onRecord?: (r: FixtureRecord, f: FleetState, c: ManualClock) => void } = {}) {
+    this.records = records.filter((r) => r.kind !== 'fixture' && typeof r.rx_ms === 'number').sort((a, b) => a.rx_ms! - b.rx_ms!);
+    this.start = this.records[0]!.rx_ms!;
+    this.end = this.records.at(-1)!.rx_ms!;
+    this.clock = new ManualClock(this.start);
+    this.fleet = new FleetState(this.clock);
+    this.fleet.subscribe((e) => this.events.push(e));
+    this.#onRecord = opts.onRecord;
+    const hello = opts.hello === undefined ? helloAt(this.start) : opts.hello;
+    if (hello) this.fleet.ingest(hello);
   }
-  return { clock, fleet, events, start, end: body.at(-1)!.rx_ms! };
+
+  get done(): boolean { return this.#next >= this.records.length; }
+
+  // When the next record arrives, or null at the end.
+  nextAt(): number | null { return this.records[this.#next]?.rx_ms ?? null; }
+
+  advanceTo(t: number): void {
+    for (let r = this.records[this.#next]; r && r.rx_ms! <= t; r = this.records[++this.#next]) {
+      this.clock.advance(Math.max(0, r.rx_ms! - this.clock.now()));
+      if (r.kind === 'msg') this.fleet.ingestLine(JSON.stringify(r.m));
+      else if (r.kind === 'unparseable') this.fleet.ingestLine(String(r.raw));
+      else if (r.kind === 'connected') this.fleet.newConnection();
+      this.fleet.tick();
+      this.#onRecord?.(r, this.fleet, this.clock);
+    }
+    if (t > this.clock.now()) {
+      this.clock.advance(t - this.clock.now());
+      this.fleet.tick();
+    }
+  }
+}
+
+export function replay(records: FixtureRecord[], opts: { hello?: boolean; onRecord?: (r: FixtureRecord, f: FleetState, c: ManualClock) => void } = {}) {
+  const r = new Replayer(records, { hello: opts.hello === false ? null : undefined, onRecord: opts.onRecord });
+  r.advanceTo(r.end);
+  return { clock: r.clock, fleet: r.fleet, events: r.events, start: r.start, end: r.end };
 }
 
 export { readRecords };
