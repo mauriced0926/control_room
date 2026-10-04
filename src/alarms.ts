@@ -22,7 +22,7 @@ export interface AlarmRaise {
 export interface AlarmClear {
   type: 'clear';
   key: string;
-  reason: string;          // why it cleared, e.g. "truck confirmed outside DECLINE"
+  reason: string;          // why it cleared, e.g. "truck confirmed outside the zone"
   atServerMs: number;
 }
 
