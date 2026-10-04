@@ -45,7 +45,10 @@ old trucks from the start, not retrofitted for them.
   shot"** and list the reasons (truck, why: inside, can't get out in time, frozen, silent, faulted).
   UNSURE never looks like CLEAR (invariant 6; answer 1: in doubt, hold the shot). The operator can
   record "I've confirmed it's clear" over UNSURE or NOT CLEAR only with a reason, and both the
-  recommendation and their decision go in the log.
+  recommendation and their decision go in the log. **While the site link is down**, every zone that
+  isn't open shows UNSURE in full colour (`BLAST.md` B13), with the last call beneath it in grey and its
+  age, e.g. "was CLEAR, 12 s ago". The panel is not greyed with the rest: a green CLEAR sitting there
+  during an outage is exactly what this screen must never show.
 - **Attention tray.** Interrupts at the top, each needing an attributed acknowledgement. Below them, the
   silent items, each showing the rule that kept it silent (L2.60–L2.62). Re-alerts at 15 minutes,
   escalates at 30; on nights, when the operator is the supervisor, escalation is more persistent
@@ -58,7 +61,9 @@ old trucks from the start, not retrofitted for them.
 **2. Truck detail** (click any truck)
 
 - Everything in its table row, plus faults (which, when, where), skew of its clock, battery drain against
-  the fleet, and its controller restarts.
+  the fleet, and its controller restarts. A **controller restart** is not an interrupt: it shows here,
+  as a silent item in the attention tray, and as a small marker in the fleet table's data column for
+  about a minute.
 - **Command timeline:** each command as sent → acknowledged → effect seen, with times; or "retry 2 of 3";
   or failed with the reason in plain words ("HT-04 is being driven by Marta"). A command blocked by a
   lease is also shown to the lease holder (L8.1).
