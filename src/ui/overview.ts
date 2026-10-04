@@ -151,10 +151,12 @@ function controlCell(t: TruckView): string {
   return parts.join(' · ');
 }
 
-// Placeholder until the command registry exists (PLAN.md task 4).
+// No command on this truck yet, or (in the fixture player) no command registry at all.
 export const NO_COMMAND_YET = '—';
 
-export function fleetRows(snap: FleetSnapshot): FleetRow[] {
+// `lastCommands`: each truck's latest command in words ("HOLD by priya: done: ..."), from the live
+// service. The fixture player has none.
+export function fleetRows(snap: FleetSnapshot, lastCommands: ReadonlyMap<string, string> = new Map()): FleetRow[] {
   const closing = new Map(snap.zones.filter((z) => z.status !== 'OPEN').map((z) => [z.zoneId, z]));
   const rows = snap.trucks.map((t, i) => {
     const { tier, why } = tierOf(t, closing);
@@ -175,7 +177,7 @@ export function fleetRows(snap: FleetSnapshot): FleetRow[] {
         soc: soc.text,
         socFlags: soc.flags,
         control: controlCell(t),
-        lastCommand: NO_COMMAND_YET,
+        lastCommand: lastCommands.get(t.vehicleId) ?? NO_COMMAND_YET,
       } satisfies FleetRow,
     };
   });
@@ -193,16 +195,19 @@ export interface LinkView {
 // The site link, from heartbeat age (PROTOCOL.md §4.3). `recorded` is false only in the fixture
 // player, for a recording that kept no heartbeats: then the link's state is not known, and saying
 // "down" would grey a picture that is not stale.
+// The live service also says when its connection has dropped (snap.link.up false): that is down at
+// once, without waiting for the heartbeat to go stale.
 export function siteLink(snap: FleetSnapshot, recorded = true): LinkView {
   if (!recorded) return { state: 'not recorded', text: 'Site link: not in this recording' };
   const hb = snap.heartbeat;
   if (hb.ageMs === null) return { state: 'down', text: 'Site link DOWN: no heartbeat yet' };
-  if (hb.stale) return { state: 'down', text: `Site link DOWN: no heartbeat for ${age(hb.ageMs)}` };
+  if (hb.stale || snap.link.up === false) return { state: 'down', text: `Site link DOWN: no heartbeat for ${age(hb.ageMs)}` };
   return { state: 'up', text: `Site link up: heartbeat ${age(hb.ageMs)} ago` };
 }
 
-export function serviceLink(sinceLastFrameMs: number | null, staleAfterMs: number): LinkView {
+// `open` false: the browser knows its connection to the service has closed, so it is down at once.
+export function serviceLink(sinceLastFrameMs: number | null, staleAfterMs: number, open = true): LinkView {
   if (sinceLastFrameMs === null) return { state: 'down', text: 'Service: not connected yet' };
-  if (sinceLastFrameMs >= staleAfterMs) return { state: 'down', text: `Service DISCONNECTED: nothing for ${age(sinceLastFrameMs)}` };
+  if (sinceLastFrameMs >= staleAfterMs || !open) return { state: 'down', text: `Service DISCONNECTED: nothing for ${age(sinceLastFrameMs)}` };
   return { state: 'up', text: 'Service connected' };
 }

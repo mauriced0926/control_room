@@ -67,6 +67,23 @@ test('service link: disconnected once frames stop', () => {
   assert.equal(serviceLink(500, 3_000).state, 'up');
   assert.equal(serviceLink(3_000, 3_000).text, 'Service DISCONNECTED: nothing for 3 s');
   assert.equal(serviceLink(null, 3_000).state, 'down');
+  assert.deepEqual(serviceLink(800, 3_000, false), { state: 'down', text: 'Service DISCONNECTED: nothing for 0 s' }, 'a closed connection is down at once');
+});
+
+test('site link: the live service\'s own "link down" is down at once, before the heartbeat goes stale', () => {
+  const { fleet } = replay(fixture('link-drop-in-notice'));
+  const snap = fleet.snapshot();
+  const fresh = { ...snap, heartbeat: { lastServerMs: 1, ageMs: 1_200, stale: false } };
+  assert.equal(siteLink({ ...fresh, link: { up: true, sinceServerMs: 0, reason: 'connected' } }).state, 'up');
+  assert.deepEqual(siteLink({ ...fresh, link: { up: false, sinceServerMs: 0, reason: 'connection closed' } }), { state: 'down', text: 'Site link DOWN: no heartbeat for 1 s' });
+  assert.equal(siteLink({ ...fresh, link: { up: null, sinceServerMs: null, reason: 'not connected yet' } }).state, 'up', 'the player reports no link of its own');
+});
+
+test('the last-command column shows what the live service says, and a dash otherwise', () => {
+  const { fleet } = replay(fixture('frozen-truck'));
+  const rows = fleetRows(fleet.snapshot(), new Map([['HT-10', 'HOLD by priya: accepted, not carried out yet']]));
+  assert.equal(rows.find((r) => r.vehicleId === 'HT-10')!.lastCommand, 'HOLD by priya: accepted, not carried out yet');
+  assert.equal(rows.find((r) => r.vehicleId === 'HT-05')!.lastCommand, '—');
 });
 
 test('silent-truck: HT-03 is the first row, "silent N s", last seen where it was', () => {

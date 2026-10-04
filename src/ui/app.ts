@@ -2,11 +2,19 @@
 // The Overview in the browser: draws what src/ui/track.ts and src/ui/overview.ts compute from each
 // frame, and nothing else. All decisions about words, order and shape live in those pure modules.
 //
-// Frames come from the fixture player now (player/server.ts) and from the service later, over the
-// same shape: { player?, site, snapshot }. The browser keeps its own clock only to notice frames have
-// stopped, so a stopped feed never looks current (UI.md principle 2).
+// Frames come from the fixture player (player/server.ts, over server-sent events) or from the live
+// service (src/live.ts, over a WebSocket), in the same shape: { player?, live?, site, snapshot }. The
+// page is in live mode when the service marks it so (<body data-mode="live">). The browser keeps its
+// own clock only to notice frames have stopped, so a stopped feed never looks current (UI.md
+// principle 2).
+//
+// In live mode the browser sends commands (the e-stop for now) over the same WebSocket. It never
+// names the operator: the service takes that from the session. It never queues a command it could not
+// send: with the service disconnected it says so, and nothing is sent later.
 import { SystemClock } from '../clock.ts';
+import { PARAMS } from '../params.ts';
 import type { FleetSnapshot } from '../fleet.ts';
+import type { CommandView, LiveState, Notice } from '../live.ts';
 import { clearanceRows, fleetRows, serviceLink, siteLink, type LinkView } from './overview.ts';
 import { trackModel, type SiteData, type TrackModel } from './track.ts';
 
@@ -15,9 +23,12 @@ interface PlayerState {
   playing: boolean; speed: number; atEnd: boolean; heartbeatsRecorded: boolean; helloFrom: string;
   bookmarks: Array<{ offsetMs: number; text: string }>;
 }
-interface Frame { player?: PlayerState; site: SiteData | null; snapshot: FleetSnapshot }
+interface Frame { player?: PlayerState; live?: LiveState; site: SiteData | null; snapshot: FleetSnapshot }
+interface You { id: string; name: string; role: string }
 
-const SERVICE_STALE_MS = 3_000; // the player sends a frame at least every second
+const SERVICE_STALE_MS = PARAMS.browserStaleAfter.value; // both the player and the service send a frame at least every second
+const RECONNECT_MS = 2_000;
+const LIVE = document.body.dataset.mode === 'live';
 const SPEEDS = [0.5, 1, 2, 5, 10, 30];
 const clock = new SystemClock();
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -25,6 +36,9 @@ const SVG = 'http://www.w3.org/2000/svg';
 
 let frame: Frame | null = null;
 let lastFrameAt: number | null = null;
+let socket: WebSocket | null = null; // live mode: open, or null
+let you: You | null = null;
+let notices: Notice[] = [];
 
 // ---- small DOM helpers ----
 
@@ -54,7 +68,7 @@ function setLink(id: string, v: LinkView): void {
 
 function renderLinks(): void {
   const since = lastFrameAt === null ? null : clock.now() - lastFrameAt;
-  const service = serviceLink(since, SERVICE_STALE_MS);
+  const service = serviceLink(since, SERVICE_STALE_MS, !LIVE || socket !== null);
   setLink('service-link', service);
   const site = frame ? siteLink(frame.snapshot, frame.player?.heartbeatsRecorded ?? true) : { state: 'down' as const, text: 'Site link: no data' };
   setLink('site-link', site);
@@ -67,7 +81,10 @@ function renderLinks(): void {
   if (p && !p.playing && service.state !== 'down') {
     banners.push(el('div', { class: 'banner note' }, p.atEnd ? 'End of the recording. Fixture time has stopped: ages are not counting.' : 'Paused. Fixture time has stopped: ages are not counting.'));
   }
+  const live = frame?.live;
+  if (live && !live.blastSafety.active) banners.push(el('div', { class: 'banner warn' }, live.blastSafety.note));
   $('banners').replaceChildren(...banners);
+  if (LIVE) renderEstops();
 }
 
 // ---- zone clearance ----
@@ -180,8 +197,16 @@ function renderTrack(site: SiteData, snap: FleetSnapshot): void {
 
 // ---- fleet table ----
 
+function lastCommands(live: LiveState | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const c of live?.commands ?? []) { // newest first
+    if (!out.has(c.vehicleId)) out.set(c.vehicleId, `${c.action} by ${c.by}: ${c.summary}`);
+  }
+  return out;
+}
+
 function renderRows(snap: FleetSnapshot): void {
-  $('rows').replaceChildren(...fleetRows(snap).map((r) => el('tr', { class: r.dataKind, 'data-truck': r.vehicleId, 'data-kind': r.dataKind },
+  $('rows').replaceChildren(...fleetRows(snap, lastCommands(frame?.live)).map((r) => el('tr', { class: r.dataKind, 'data-truck': r.vehicleId, 'data-kind': r.dataKind },
     el('td', { class: 'id' }, r.vehicleId),
     el('td', { class: 'data' }, r.data),
     el('td', { class: 'why' }, r.attention ?? ''),
@@ -189,7 +214,7 @@ function renderRows(snap: FleetSnapshot): void {
     el('td', {}, r.zone, r.zoneAlert ? el('br') : null, r.zoneAlert ? el('span', { class: 'zalert' }, r.zoneAlert) : null),
     el('td', {}, r.soc, ...r.socFlags.map((f) => el('span', { class: 'flag' }, f))),
     el('td', {}, r.control),
-    el('td', { class: 'cmd', title: 'The command registry is not built yet' }, r.lastCommand),
+    el('td', { class: 'cmd' }, r.lastCommand),
   )));
 }
 
@@ -254,12 +279,172 @@ function setupSound(): void {
   });
 }
 
+// ---- live mode ----
+
+function connectLive(): void {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`);
+  ws.onopen = () => { socket = ws; };
+  ws.onmessage = (e) => {
+    let m: { type?: string; [k: string]: unknown };
+    try { m = JSON.parse(String(e.data)); } catch { return; }
+    if (m.type === 'frame') {
+      const body = m.body as { frame: Frame };
+      frame = body.frame;
+      you = m.you as You;
+      notices = (m.notices as Notice[]) ?? [];
+      lastFrameAt = clock.now();
+      render();
+    } else if (m.type === 'result') {
+      onResult(m as unknown as Result);
+    }
+  };
+  ws.onclose = (e) => {
+    if (socket === ws) socket = null;
+    renderLinks();
+    if (e.code === 4401) { location.href = '/login'; return; } // the session ended
+    clock.setTimeout(() => void reconnect(), RECONNECT_MS);
+  };
+}
+
+// Before reconnecting, ask whether the session is still there; if not, back to the login page.
+async function reconnect(): Promise<void> {
+  try {
+    const r = await fetch('/api/session', { cache: 'no-store' });
+    if (r.status === 401) { location.href = '/login'; return; }
+  } catch { /* the service is down: try the socket anyway, and again later */ }
+  connectLive();
+}
+
+interface Result { type: 'result'; ref: string | null; ok: boolean; error?: string; command?: CommandView }
+const asked = new Map<string, string>(); // ref -> truck, for e-stops sent and not yet answered
+let refN = 0;
+
+function onResult(m: Result): void {
+  const truck = m.ref ? asked.get(m.ref) : undefined;
+  if (m.ref) asked.delete(m.ref);
+  if (!m.ok && truck) estopNote(`E-stop ${truck} NOT sent: ${m.error ?? m.command?.summary ?? 'refused'}`, true);
+  else if (truck) estopNote(`E-stop ${truck}: ${m.command?.summary ?? 'sent'}`, false);
+  else if (!m.ok) estopNote(m.error ?? m.command?.summary ?? 'refused', true);
+  renderEstops();
+}
+
+function estopNote(text: string, bad: boolean): void {
+  const n = $('estop-note');
+  n.textContent = text;
+  n.classList.toggle('bad', bad);
+}
+
+function send(msg: Record<string, unknown>): string | null {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return null;
+  const ref = `b${++refN}`;
+  socket.send(JSON.stringify({ ...msg, ref }));
+  return ref;
+}
+
+function estop(truck: string): void {
+  const ref = send({ type: 'command', action: 'ESTOP', vehicleId: truck });
+  if (ref === null) {
+    // Never queued: a stop sent later, unseen, is a different decision (L7.8).
+    estopNote(`E-stop ${truck} NOT sent: the service is disconnected. Use the radio.`, true);
+    return;
+  }
+  asked.set(ref, truck);
+  estopNote(`E-stop ${truck}: sending…`, false);
+}
+
+// The e-stop state of one truck, in a word: our open command first, then the truck's own report.
+// "stopped" only when the truck itself says ESTOPPED.
+function estopWord(truck: string, live: LiveState, snap: FleetSnapshot): { word: string; kind: string } {
+  const t = snap.trucks.find((x) => x.vehicleId === truck);
+  const c = live.commands.find((x) => x.vehicleId === truck && x.action === 'ESTOP');
+  if (c?.needsReconfirm) return { word: 'NOT sent', kind: 'reconfirm' };
+  if (c?.waitingForLink) return { word: 'pending', kind: 'pending' };
+  if (c && c.open) return { word: 'sent', kind: 'sent' };
+  if (c && (c.status === 'failed' || c.status === 'expired')) return { word: 'NOT done', kind: 'failed' };
+  if (t?.state?.value === 'ESTOPPED') return { word: 'stopped', kind: 'stopped' };
+  return { word: 'STOP', kind: 'ready' };
+}
+
+function renderEstops(): void {
+  const live = frame?.live;
+  const snap = frame?.snapshot;
+  const box = $('estop-trucks');
+  if (!live || !snap) return;
+  const ids = snap.trucks.filter((t) => t.onRoster !== false).map((t) => t.vehicleId);
+  // Buttons keep their element between frames, so a press is never lost to a redraw.
+  const have = new Map([...box.querySelectorAll<HTMLButtonElement>('button')].map((b) => [b.dataset.truck!, b]));
+  const buttons = ids.map((id) => {
+    let b = have.get(id);
+    if (!b) {
+      b = el('button', { type: 'button', class: 'estop-truck', 'data-truck': id }, el('b', {}, id), el('span', {}, 'STOP'));
+      b.addEventListener('click', () => estop(id));
+    }
+    const s = estopWord(id, live, snap);
+    b.dataset.kind = s.kind;
+    b.lastElementChild!.textContent = s.word;
+    b.setAttribute('aria-label', `E-stop ${id}: ${s.word}`);
+    return b;
+  });
+  if (buttons.length !== box.children.length || buttons.some((b, i) => box.children[i] !== b)) box.replaceChildren(...buttons);
+
+  // E-stops waiting for the link, needing confirmation again, or not done: each says so, with what to do.
+  const list = $('estop-pending');
+  const waiting = live.commands.filter((c) => c.action === 'ESTOP' && (c.waitingForLink || (!c.open && (c.status === 'failed' || c.status === 'expired'))));
+  const rows = new Map([...list.querySelectorAll<HTMLElement>('.estop-row')].map((r) => [r.dataset.id!, r]));
+  const out = waiting.map((c) => {
+    let r = rows.get(c.id);
+    if (!r) {
+      r = el('div', { class: 'banner down estop-row', 'data-id': c.id, 'data-truck': c.vehicleId }, el('span', { class: 'text' }));
+      if (c.waitingForLink) {
+        const again = el('button', { type: 'button', class: 'again' }, 'Confirm e-stop again');
+        again.addEventListener('click', () => { if (send({ type: 'reconfirm', recordId: c.id }) === null) estopNote('NOT sent: the service is disconnected.', true); });
+        const cancel = el('button', { type: 'button', class: 'cancel' }, 'Cancel');
+        cancel.addEventListener('click', () => { if (send({ type: 'cancel', recordId: c.id }) === null) estopNote('NOT cancelled: the service is disconnected.', true); });
+        r.append(again, cancel);
+      }
+    }
+    r.dataset.kind = c.needsReconfirm ? 'reconfirm' : c.waitingForLink ? 'pending' : 'failed';
+    r.querySelector<HTMLElement>('.text')!.textContent = `E-stop ${c.vehicleId} (pressed by ${c.by}): ${c.summary}`;
+    const again = r.querySelector<HTMLButtonElement>('button.again');
+    if (again) again.hidden = !c.needsReconfirm;
+    const cancel = r.querySelector<HTMLButtonElement>('button.cancel');
+    if (cancel) cancel.hidden = !c.waitingForLink;
+    return r;
+  });
+  if (out.length !== list.children.length || out.some((r, i) => list.children[i] !== r)) list.replaceChildren(...out);
+  list.hidden = out.length === 0;
+}
+
+function renderLive(live: LiveState, snap: FleetSnapshot): void {
+  $('you').textContent = you ? `${you.name} (${you.role})` : '';
+  const who = live.who.map((w) => {
+    const holds = live.leases.filter((l) => l.operatorId === w.id).map((l) => l.vehicleId);
+    return el('span', { class: `person ${w.role}`, 'data-user': w.id },
+      `${w.name} · ${w.role}${w.screens > 1 ? ` · ${w.screens} screens` : ''}${holds.length ? ` · has control of ${holds.join(', ')}` : ''}`);
+  });
+  // Leases held by someone with no screen open here: another client of the site, or a closed browser.
+  const away = live.leases.filter((l) => !live.who.some((w) => w.id === l.operatorId))
+    .map((l) => el('span', { class: 'person away', 'data-user': l.operatorId }, `${l.operatorId} · no screen open here · has control of ${l.vehicleId}`));
+  $('who').replaceChildren(el('b', {}, 'On: '), ...who, ...away);
+
+  const items = [
+    ...notices.map((n) => ({ at: n.atServerMs, cls: 'notice', text: n.message })),
+    ...live.alarms.map((a) => ({ at: a.atServerMs, cls: 'alarm', text: a.message })),
+  ].sort((a, b) => b.at - a.at).slice(0, 12);
+  const now = snap.atServerMs;
+  $('alarm-list').replaceChildren(...(items.length
+    ? items.map((i) => el('div', { class: `item ${i.cls}` }, el('span', { class: 'ago' }, `${clock2(Math.max(0, now - i.at))} ago`), i.text))
+    : [el('p', { class: 'none' }, 'Nothing needs you.')]));
+  renderEstops();
+}
+
 // ---- main ----
 
 function render(): void {
   renderLinks();
   if (!frame) return;
   renderPlayer(frame.player);
+  if (frame.live) renderLive(frame.live, frame.snapshot);
   $('site-id').textContent = frame.snapshot.siteId ?? 'no site yet';
   renderClearance(frame.snapshot);
   if (frame.site) renderTrack(frame.site, frame.snapshot);
@@ -279,7 +464,19 @@ function connect(): void {
 const watch = () => { renderLinks(); clock.setTimeout(watch, 500); };
 
 setupSound();
-void setupPlayer().then(connect);
+if (LIVE) {
+  $('player').hidden = true;
+  $('mode').textContent = 'LIVE';
+  $('live-bar').hidden = false;
+  $('alarms').hidden = false;
+  $('estop-trucks').hidden = false;
+  $('estop').title = 'E-stop: one press stops that truck. Shown as done only when the truck reports ESTOPPED.';
+  $('estop').classList.add('armed');
+  $('estop-note').textContent = 'one press per truck';
+  connectLive();
+} else {
+  void setupPlayer().then(connect);
+}
 watch();
 let resizeTimer: ReturnType<typeof clock.setTimeout> | null = null;
 window.addEventListener('resize', () => {

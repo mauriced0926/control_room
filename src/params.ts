@@ -6,7 +6,7 @@ export type Source = 'spec' | 'measured' | 'decided';
 
 export interface Param {
   readonly value: number;
-  readonly unit: 'm/s' | 'ms' | 'm' | '%' | '%/s' | 'count' | 'ratio';
+  readonly unit: 'm/s' | 'ms' | 'm' | '%' | '%/s' | 'count' | 'ratio' | 'bytes';
   readonly source: Source;
   readonly ref: string;
 }
@@ -83,6 +83,17 @@ export const PARAMS = {
   estopAutoSendWithin: p(10_000, 'ms', 'decided', 'TESTING.md L7.8: a pending e-stop is sent on reconnect only within 10 s'),
   realertAfter: p(15 * 60_000, 'ms', 'decided', 'TESTING.md L2.63'),
   escalateAfter: p(30 * 60_000, 'ms', 'decided', 'TESTING.md L2.63'),
+
+  // The service and the operators' browsers (task 6b)
+  livePushMinInterval: p(250, 'ms', 'decided', 'at most 4 pictures a second to each browser: faster than a person reads, slow enough that 140 trucks fit; trucks report at 5 Hz and chips glide between frames'),
+  liveFrameMaxInterval: p(1_000, 'ms', 'decided', 'a frame at least every second even when nothing arrived, so ages keep counting on screen and the frame doubles as the service heartbeat'),
+  browserStaleAfter: p(3_000, 'ms', 'decided', 'the browser says "service disconnected" after 3 missed frames; src/ui/app.ts reads it from here'),
+  liveMaxBufferedBytes: p(1_048_576, 'bytes', 'decided', 'a browser this far behind skips frames rather than queueing old pictures'),
+  sessionIdleTimeout: p(30 * 60_000, 'ms', 'decided', 'a session ends 30 min after its last request with no screen open; an open screen keeps it alive, because logging out a watched control-room screen mid-shift hides alarms'),
+  sessionMaxAge: p(14 * 3_600_000, 'ms', 'decided', 'a 12-hour shift plus handover: every session ends by then, screen open or not'),
+  loginMaxFailures: p(5, 'count', 'decided', 'failed logins for one user name, or from one address, before further attempts are refused for the window'),
+  loginFailureWindow: p(15 * 60_000, 'ms', 'decided', 'the window the failure count covers'),
+  browserMessagesPerSecond: p(10, 'count', 'decided', 'a person presses at most a few buttons a second; more is a stuck script or an attack, refused and logged'),
 } as const satisfies Record<string, Param>;
 
 export type ParamName = keyof typeof PARAMS;

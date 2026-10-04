@@ -89,3 +89,9 @@ export class ManualClock implements Clock {
     return best;
   }
 }
+
+// A time as an ISO 8601 string, for log lines. Here because this is the one module allowed to use
+// Date; it formats the time it is given and never reads the clock itself.
+export function isoTime(ms: number): string {
+  return new Date(ms).toISOString();
+}
