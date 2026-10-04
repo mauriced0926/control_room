@@ -17,3 +17,11 @@ dist/
 
 # agent worktrees
 .claude/worktrees/
+
+# the service's database, and any key or certificate: never committed
+data/
+*.db
+*.db-wal
+*.db-shm
+*.pem
+*.key
