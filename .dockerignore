@@ -1,0 +1,17 @@
+# Only package.json, package-lock.json, src/ and config/ go into the image.
+**/._*
+.git
+.env
+.env.*
+node_modules
+data
+.claude
+ai-sessions
+research
+docs
+fake
+player
+test
+tools
+dlh-candidate-package
+*.zip
