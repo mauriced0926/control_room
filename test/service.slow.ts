@@ -72,6 +72,9 @@ test('L13.1 (outside Docker) starts with only the three GATEWAY_* variables and 
   const page = await http(svc.port, 'GET', '/', { headers: { cookie } });
   assert.equal(page.status, 200);
   assert.match(page.body, /<body data-mode="live">/);
+  const app = await http(svc.port, 'GET', '/src/ui/app.ts', { headers: { cookie } });
+  assert.equal(app.status, 200, 'the UI modules, type-stripped (stripTypeScriptTypes is experimental in Node 24)');
+  assert.ok(!/: FleetSnapshot/.test(app.body));
   const c = new LiveClient(svc, cookie);
   const f = await waitFor(() => c.frames().find((x) => x.body.frame.snapshot.trucks.some((tr: any) => tr.confidence === 'live')), 10_000, 'a frame with live trucks');
   assert.equal(f.body.frame.live.link.state, 'up');

@@ -18,7 +18,7 @@ import type { Socket } from 'node:net';
 import { extname, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { LiveHub } from './live.ts';
+import { MAX_SCREENS_PER_SESSION, type LiveHub } from './live.ts';
 import { clearedCookie, LoginThrottle, sessionCookie, sessionIdFrom, type Session, type Sessions } from './sessions.ts';
 import type { User, UserBook } from './users.ts';
 
@@ -99,6 +99,7 @@ export async function startHttp(o: HttpOptions): Promise<HttpServer> {
     const session = o.sessions.get(sessionIdFrom(req.headers.cookie));
     if (!session) return refuse(401, 'Unauthorized');
     if (new URL(req.url ?? '/', 'http://x').pathname !== LIVE_PATH) return refuse(404, 'Not Found');
+    if (o.hub.screensOf(session.id) >= MAX_SCREENS_PER_SESSION) return refuse(429, 'Too Many Requests');
     wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
       const live = o.hub.connect({ send: (t) => ws.send(t), close: (c, r) => ws.close(c, r), get bufferedAmount() { return ws.bufferedAmount; } }, session);
       ws.on('message', (data, isBinary) => live.receive(data, isBinary));

@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import WebSocket from 'ws';
+import { MAX_SCREENS_PER_SESSION } from '../src/live.ts';
 import { PARAMS } from '../src/params.ts';
 import { startService, type Service } from '../src/service.ts';
 import { hashPassword, parseUsers, UserBook } from '../src/users.ts';
@@ -240,4 +241,21 @@ test('L6.4 several browsers, several operators: still one gateway connection', a
   const authLines = r.dialer.sentLines.filter((l) => l.includes('"type":"auth"'));
   assert.equal(authLines.length, 1);
   for (const s of socks) s.close();
+});
+
+test('one login can open a few screens, not thousands', async (t) => {
+  const r = await rig(t);
+  const { cookie } = await login(r, 'priya');
+  const open: WebSocket[] = [];
+  for (let i = 0; i < MAX_SCREENS_PER_SESSION; i++) {
+    const s = await ws(r, { origin: r.origin, cookie: cookie! });
+    assert.ok('ws' in s, `screen ${i + 1}`);
+    open.push(s.ws);
+  }
+  assert.deepEqual(await ws(r, { origin: r.origin, cookie: cookie! }), { status: 429 });
+  const other = await login(r, 'dave');
+  const d = await ws(r, { origin: r.origin, cookie: other.cookie! });
+  assert.ok('ws' in d, 'another operator is unaffected');
+  d.ws.close();
+  for (const s of open) s.close();
 });

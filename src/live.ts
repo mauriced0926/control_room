@@ -60,6 +60,7 @@ export interface LiveState {
 
 export const BLAST_SAFETY_OFF = 'Blast safety is NOT active in this build: nothing stops a truck being sent into a closing zone, and no truck is evacuated automatically.';
 
+export const MAX_SCREENS_PER_SESSION = 8;
 const MAX_ALARMS = 50;
 const MAX_NOTICES = 20;
 const MAX_TEXT = 4_096;          // a browser message, in bytes (ws refuses larger frames itself)
@@ -130,6 +131,14 @@ export class LiveHub {
   }
 
   get clientCount(): number { return this.#clients.size; }
+
+  // Screens open on one session. The HTTP layer refuses more than MAX_SCREENS_PER_SESSION, so one
+  // login can't open thousands of sockets.
+  screensOf(sessionId: string): number {
+    let n = 0;
+    for (const c of this.#clients) if (c.session.id === sessionId) n++;
+    return n;
+  }
 
   // A browser has connected with a session the HTTP layer has already checked.
   connect(sock: LiveSocket, session: Session): { receive(data: unknown, isBinary: boolean): void; closed(): void } {
