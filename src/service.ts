@@ -21,7 +21,7 @@ export interface ServiceOptions {
   email: string;            // the gateway login; never logged
   dbPath: string;           // SQLite file, or ':memory:'
   users: UserBook;
-  http: { host: string; port: number; publicOrigins: string[] };
+  http: { host: string; port: number; publicOrigins: string[]; trustProxy?: boolean };
   log: (line: string) => void;
   random?: () => number;
 }

@@ -15,6 +15,7 @@ export interface ServiceConfig {
     host: string;
     port: number;            // 0: any free port (tests)
     publicOrigins: string[]; // extra origins browsers reach us at, e.g. through a TLS proxy
+    trustProxy: boolean;     // TRUST_PROXY: take the client address from X-Forwarded-For from any peer
   };
   dataDir: string;
   usersFile: string;
@@ -47,7 +48,9 @@ export function serviceConfigFromEnv(env: Record<string, string | undefined>): S
 
   return {
     link,
-    http: { host, port, publicOrigins },
+    // Only for a deployment where nothing but the proxy can reach the port (compose publishes on
+    // 127.0.0.1): behind Docker the proxy's connection comes from the bridge, not loopback.
+    http: { host, port, publicOrigins, trustProxy: set('TRUST_PROXY') && /^(1|true|yes)$/i.test(env.TRUST_PROXY!.trim()) },
     dataDir: set('DATA_DIR') ? env.DATA_DIR!.trim() : DEFAULT_DATA_DIR,
     usersFile: set('USERS_FILE') ? env.USERS_FILE!.trim() : DEMO_USERS_FILE,
     demoUsers: !set('USERS_FILE'),

@@ -55,6 +55,7 @@ export interface HttpOptions {
   host: string;
   port: number;
   publicOrigins: string[];
+  trustProxy?: boolean;
   users: UserBook;
   sessions: Sessions;
   throttle: LoginThrottle;
@@ -161,7 +162,7 @@ export async function startHttp(o: HttpOptions): Promise<HttpServer> {
     const form = new URLSearchParams(body);
     const name = (form.get('username') ?? '').trim().toLowerCase().slice(0, 64);
     const password = form.get('password') ?? '';
-    const address = clientAddress(req);
+    const address = clientAddress(req, o.trustProxy ?? false);
     const keys = LoginThrottle.keys(address, name);
     const known = o.users.find(name) ? name : null;
     if (o.throttle.blocked(keys)) {
@@ -234,13 +235,15 @@ export function ourOrigins(host: string, port: number, extra: string[]): string[
   return [...out];
 }
 
-// Behind the reverse proxy every connection comes from loopback; the proxy appends the real address
-// to X-Forwarded-For, so the last entry is the one it saw. From anywhere else, the peer itself.
-function clientAddress(req: IncomingMessage): string {
+// Behind a reverse proxy the proxy appends the real address to X-Forwarded-For, so the last entry is
+// the one it saw. Trusted from loopback, or from any peer with TRUST_PROXY: in Docker the proxy's
+// connection arrives from the bridge gateway, and without this every login would share one address
+// and one operator's typos would throttle everyone. Otherwise, the peer itself.
+export function clientAddress(req: Pick<IncomingMessage, 'headers' | 'socket'>, trustProxy: boolean): string {
   const peer = req.socket.remoteAddress ?? 'unknown';
   const loop = peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
   const xff = req.headers['x-forwarded-for'];
-  if (loop && typeof xff === 'string' && xff.trim()) return xff.split(',').at(-1)!.trim().slice(0, 64);
+  if ((loop || trustProxy) && typeof xff === 'string' && xff.trim()) return xff.split(',').at(-1)!.trim().slice(0, 64);
   return peer;
 }
 

@@ -12,6 +12,9 @@ services:
       # Behind a TLS proxy, the public address (e.g. https://cr.example.com): the service checks
       # Origin and Host against it, and marks the session cookie Secure when it is https.
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+      # Take the client address from the proxy's X-Forwarded-For (login throttling is per address).
+      # Safe only because the port below is published on 127.0.0.1: only the host can reach it.
+      TRUST_PROXY: "1"
     ports:
       # Published on this machine only. Docker's published ports can bypass a host firewall, so
       # anything public goes through a reverse proxy instead.
