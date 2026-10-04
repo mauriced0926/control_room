@@ -151,3 +151,29 @@ heartbeats and every truck's telemetry across the gap.
 ends before the fifth reconnect, as live; the stall injector stays, marked as not seen live; the loss
 figures and `report.py` are fixed (`4531e4c`, `e007d97`). A fixture is a claim about what matters in a
 recording. Cutting it narrowly hides the context that would show the claim is wrong.
+
+---
+
+## 6. Right in every test, wrong in production: the client address behind the proxy
+
+**Session:** main session, deploying to the OCI box, 2026-10-04.
+
+**Asked.** Task 6b (`tasks/06b-server.md`): the service, operator login and live updates. The agent
+added login throttling per client address, and anticipated a reverse proxy: it trusted
+`X-Forwarded-For` when the connection came from loopback.
+
+**Came back.** All tests passing, including the throttling tests, and a careful security write-up.
+
+**What was wrong.** The deployment, not the code as tested. Behind Caddy and Docker, the proxied
+connection reaches the container from Docker's bridge gateway, not loopback, so the forwarded address
+was ignored and every login appeared to come from `172.18.0.1`. Throttling per address would then have
+locked every operator out for 15 minutes after any five wrong passwords, graders included.
+
+**How it was found.** By reading the service's own log after the first real login through the proxy,
+not by any test: the address on the login line was the bridge's.
+
+**What was done.** `TRUST_PROXY` trusts the proxy's last `X-Forwarded-For` entry from any peer; compose
+sets it, which is safe only because compose publishes on `127.0.0.1`, so nothing but the host can reach
+the port (`91672f6`). Redeployed, and checked in the production log that a login through the proxy now
+carries the real client address. The tests ran the service as a developer would, on loopback; the box
+runs it as an operator would. A deploy is a test with different assumptions, and its log is evidence.
