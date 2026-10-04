@@ -14,6 +14,7 @@ to `ai-sessions/` instead.
 | 1e | 2026-10-03 | Claude Code sub-agent (Opus 5.5), in its own worktree | Task 1b, fake gateway milestone 2 (`tasks/01b-fake-gateway-m2.md`); resumed once after a session limit | Exported: [`ai-sessions/2026-10-03-task-01b-fake-gateway-m2.md`](ai-sessions/2026-10-03-task-01b-fake-gateway-m2.md) (full transcript in the `.jsonl` beside it) |
 | 1f | 2026-10-03 | Claude Code sub-agent (Opus 5.5), in its own worktree | Task 6a, fixture player and Overview screen (`tasks/06a-ui-overview.md`) | Exported: [`ai-sessions/2026-10-03-task-06a-ui-overview.md`](ai-sessions/2026-10-03-task-06a-ui-overview.md) (full transcript in the `.jsonl` beside it) |
 | 1g | 2026-10-03 | Claude Code sub-agent (Opus 5.5), in its own worktree | Tasks 3 and 4, gateway link and command registry (`tasks/03-04-gateway-link-and-registry.md`); resumed once after a session limit | Exported: [`ai-sessions/2026-10-03-task-03-04-link-registry.md`](ai-sessions/2026-10-03-task-03-04-link-registry.md) (full transcript in the `.jsonl` beside it) |
+| 1h | 2026-10-03 | Claude Code sub-agent (Opus 5.5), in its own worktree | Task 6b, the service, operator login and live updates (`tasks/06b-server.md`) | Exported: [`ai-sessions/2026-10-03-task-06b-server.md`](ai-sessions/2026-10-03-task-06b-server.md) (full transcript in the `.jsonl` beside it) |
 
 Sub-agent sessions run inside session 1 and have no share link of their own, so their transcripts are
 exported with `tools/export_session.py`, which drops every email field and replaces every email
