@@ -14,9 +14,14 @@
       <div id="service-link" class="link" data-state="down">Service: not connected yet</div>
     </div>
     <button id="sound" class="sound" type="button" data-armed="false" aria-live="polite">Sound off: click to arm</button>
-    <div class="estop" title="E-stop. In the fixture player it is not connected to anything and does nothing.">
+    <div id="estop" class="estop" title="E-stop. In the fixture player it is not connected to anything and does nothing.">
       <svg viewBox="0 0 100 100" aria-hidden="true"><polygon points="30,3 70,3 97,30 97,70 70,97 30,97 3,70 3,30"/><text x="50" y="58">STOP</text></svg>
-      <div><b>E-STOP</b><span>not connected (replay)</span></div>
+      <div><b>E-STOP</b><span id="estop-note">not connected (replay)</span></div>
+      <div id="estop-trucks" class="estop-trucks" role="group" aria-label="E-stop a truck: one press" hidden></div>
+    </div>
+    <div id="live-bar" class="live-bar" hidden>
+      <div id="who" class="who" aria-label="Who is on"></div>
+      <form method="post" action="/logout" class="logout"><span id="you"></span> <button type="submit">Log out</button></form>
     </div>
   </header>
 
@@ -36,8 +41,14 @@
   </section>
 
   <div id="banners" class="banners" aria-live="polite"></div>
+  <div id="estop-pending" class="banners estop-pending" aria-live="assertive" hidden></div>
 
   <main id="main">
+    <section id="alarms" class="alarms" aria-label="Alarms and messages" hidden>
+      <h2>Alarms and messages <span class="hint">newest first</span></h2>
+      <div id="alarm-list"></div>
+    </section>
+
     <section class="clearance" aria-label="Zone clearance">
       <h2>Zone clearance</h2>
       <div id="clearance"></div>

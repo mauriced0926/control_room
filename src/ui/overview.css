@@ -180,3 +180,56 @@ td.why { color: var(--text); font-size: 15px; max-width: 300px; }
 .fault { display: block; font-size: 14px; color: var(--closed); font-weight: 600; }
 .fault::before { content: "⚠ "; }
 td.cmd { color: var(--dim); }
+
+/* ---- live service (task 6b) ---- */
+.always-on { flex-wrap: wrap; }
+.estop.armed { opacity: 1; cursor: default; flex-wrap: wrap; }
+.estop span.bad { color: #ffd6d6; font-weight: 700; }
+.estop-trucks { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Each truck's stop is an octagon-cornered button: a distinct shape, with its state in a word. */
+.estop-truck {
+  display: flex; flex-direction: column; align-items: center; min-width: 64px; padding: 4px 6px; cursor: pointer;
+  background: #5a1616; color: #f3d0d0; border: 2px solid #c94a4a; font-size: 12px; line-height: 1.15;
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+}
+.estop-truck b { font: 700 13px var(--mono); }
+.estop-truck:hover, .estop-truck:focus-visible { background: #7a1c1c; outline: 2px solid #fff; }
+.estop-truck[data-kind="pending"], .estop-truck[data-kind="reconfirm"] { background: var(--unsure-bg); border-style: dashed; border-color: var(--unsure); color: #ffe7a8; }
+.estop-truck[data-kind="sent"] { border-style: dashed; }
+.estop-truck[data-kind="failed"] { background: var(--notclear-bg); border-color: #fff; }
+.estop-truck[data-kind="stopped"] { background: #2a1010; border-color: #6a2a24; color: var(--muted); }
+.estop-truck[data-kind="stopped"] span::before { content: "■ "; }
+.estop-pending .estop-row { display: flex; gap: 12px; align-items: center; }
+.estop-pending .estop-row .text { flex: 1; }
+.estop-pending .estop-row[data-kind="pending"] { background: var(--unsure-bg); border-color: var(--unsure); border-style: dashed; color: #ffe7a8; }
+.estop-pending .estop-row[data-kind="pending"]::before { content: "⏳ "; }
+.estop-pending button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 4px 12px; cursor: pointer; font-weight: 600; }
+.live-bar { flex-basis: 100%; display: flex; align-items: center; gap: 16px; font-size: 14px; color: var(--muted); }
+.who { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.person { border: 1px solid var(--line); border-radius: 12px; padding: 1px 10px; color: var(--text); }
+.person.supervisor { border-color: var(--truck); }
+.person.away { border-style: dashed; color: var(--muted); }
+.logout button { background: none; border: 1px solid var(--line); border-radius: 4px; padding: 2px 10px; color: var(--muted); cursor: pointer; }
+.banner.warn { background: var(--unsure-bg); border-color: var(--unsure); color: #ffe7a8; font-size: 15px; }
+.banner.warn::before { content: "⚠ "; }
+.alarms .item { padding: 6px 0; border-top: 1px solid var(--line); font-size: 15px; }
+.alarms .item:first-child { border-top: none; }
+.alarms .item.alarm::before { content: "⚠ "; color: var(--notclear); }
+.alarms .item.notice::before { content: "✉ "; color: var(--truck); }
+.alarms .ago { font-family: var(--mono); color: var(--muted); margin-right: 10px; }
+.alarms .none { color: var(--muted); margin: 0; }
+
+/* ---- login ---- */
+.login-page main.login { max-width: 360px; margin: 12vh auto; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.login h1 { font-size: 22px; margin: 0 0 8px; }
+.login-note { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+.login-error { background: var(--notclear-bg); border: 2px solid var(--notclear); border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 15px; }
+.login form { display: flex; flex-direction: column; gap: 12px; }
+.login label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+.login input { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font-size: 16px; }
+.login button { background: var(--truck-fill); border: 1px solid var(--truck); border-radius: 4px; padding: 8px; font-weight: 600; cursor: pointer; }
+.estop-truck span { color: inherit; }
+/* The hidden attribute wins over any display rule above (.player and .estop div set display). */
+[hidden] { display: none !important; }
+.estop.armed { flex-basis: 100%; order: 10; }
+.estop .estop-trucks { flex-direction: row; flex: 1; }
