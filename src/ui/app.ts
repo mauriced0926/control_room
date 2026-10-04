@@ -12,6 +12,7 @@
 // names the operator: the service takes that from the session. It never queues a command it could not
 // send: with the service disconnected it says so, and nothing is sent later.
 import { SystemClock } from '../clock.ts';
+import { PARAMS } from '../params.ts';
 import type { FleetSnapshot } from '../fleet.ts';
 import type { CommandView, LiveState, Notice } from '../live.ts';
 import { clearanceRows, fleetRows, serviceLink, siteLink, type LinkView } from './overview.ts';
@@ -25,7 +26,7 @@ interface PlayerState {
 interface Frame { player?: PlayerState; live?: LiveState; site: SiteData | null; snapshot: FleetSnapshot }
 interface You { id: string; name: string; role: string }
 
-const SERVICE_STALE_MS = 3_000; // both the player and the service send a frame at least every second
+const SERVICE_STALE_MS = PARAMS.browserStaleAfter.value; // both the player and the service send a frame at least every second
 const RECONNECT_MS = 2_000;
 const LIVE = document.body.dataset.mode === 'live';
 const SPEEDS = [0.5, 1, 2, 5, 10, 30];

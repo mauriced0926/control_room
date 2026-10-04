@@ -87,7 +87,7 @@ export const PARAMS = {
   // The service and the operators' browsers (task 6b)
   livePushMinInterval: p(250, 'ms', 'decided', 'at most 4 pictures a second to each browser: faster than a person reads, slow enough that 140 trucks fit; trucks report at 5 Hz and chips glide between frames'),
   liveFrameMaxInterval: p(1_000, 'ms', 'decided', 'a frame at least every second even when nothing arrived, so ages keep counting on screen and the frame doubles as the service heartbeat'),
-  browserStaleAfter: p(3_000, 'ms', 'decided', 'the browser says "service disconnected" after 3 missed frames (src/ui/app.ts uses the same figure)'),
+  browserStaleAfter: p(3_000, 'ms', 'decided', 'the browser says "service disconnected" after 3 missed frames; src/ui/app.ts reads it from here'),
   liveMaxBufferedBytes: p(1_048_576, 'bytes', 'decided', 'a browser this far behind skips frames rather than queueing old pictures'),
   sessionIdleTimeout: p(30 * 60_000, 'ms', 'decided', 'a session ends 30 min after its last request with no screen open; an open screen keeps it alive, because logging out a watched control-room screen mid-shift hides alarms'),
   sessionMaxAge: p(14 * 3_600_000, 'ms', 'decided', 'a 12-hour shift plus handover: every session ends by then, screen open or not'),
