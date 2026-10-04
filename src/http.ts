@@ -250,13 +250,13 @@ function send(res: ServerResponse, status: number, type: string, body: string): 
     'content-security-policy': CSP,
     'x-content-type-options': 'nosniff',
     'x-frame-options': 'DENY',
-    'referrer-policy': 'no-referrer',
+    'referrer-policy': 'same-origin',
   });
   res.end(body);
 }
 
 function redirect(res: ServerResponse, to: string): void {
-  res.writeHead(303, { location: to, 'cache-control': 'no-store', 'content-security-policy': CSP, 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' });
+  res.writeHead(303, { location: to, 'cache-control': 'no-store', 'content-security-policy': CSP, 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin' });
   res.end();
 }
 
