@@ -5,6 +5,7 @@
 //
 // Everything is injected (clock, dialer, users), so tests run it in-process against the fake gateway
 // on a manual clock, and src/main.ts runs it for real.
+import { BlastEngine } from './blast.ts';
 import type { Clock, TimerHandle } from './clock.ts';
 import { FleetState } from './fleet.ts';
 import { startHttp, type AuthEvent } from './http.ts';
@@ -36,6 +37,7 @@ export interface Service {
   store: Store;
   sessions: Sessions;
   hub: LiveHub;
+  blast: BlastEngine;
   close(): Promise<void>;
 }
 
@@ -52,6 +54,10 @@ export async function startService(o: ServiceOptions): Promise<Service> {
   const registry = new CommandRegistry({ clock, fleet, store, transport: link, gate: ALLOW_ALL_GATE_NO_BLAST_SAFETY });
   attachRegistry(link, registry);
   registry.start();
+  // The blast engine (BLAST.md): after the registry, so on reconnect the registry has replayed its
+  // commands before the engine decides on the hello snapshot.
+  const engine = new BlastEngine({ clock, fleet, registry, store, link, log });
+  engine.start();
   log(`BLAST SAFETY NOT ACTIVE: the command registry runs with ALLOW_ALL_GATE_NO_BLAST_SAFETY. ${BLAST_SAFETY_OFF}`);
 
   link.subscribe((e) => {
@@ -84,16 +90,17 @@ export async function startService(o: ServiceOptions): Promise<Service> {
     }
   };
 
-  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log });
+  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log, blast: engine, blastSafetyActive: false });
   hub.start();
   const http = await startHttp({ ...o.http, users: o.users, sessions, throttle: new LoginThrottle(clock), hub, onAuth, log });
   link.start(); // the one gateway connection (L6.4): nothing a browser does opens another
 
   return {
-    url: http.url, port: http.port, origins: http.origins, fleet, link, registry, store, sessions, hub,
+    url: http.url, port: http.port, origins: http.origins, fleet, link, registry, store, sessions, hub, blast: engine,
     close: async () => {
       if (sweep) clock.clearTimeout(sweep);
       await http.close();
+      engine.shutdown();
       registry.stop();
       link.stop();
       fleet.stop();
