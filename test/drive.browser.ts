@@ -55,6 +55,7 @@ async function page(user: keyof typeof PASSWORDS): Promise<Page> {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1100 } });
   ctxs.push(ctx);
   const p = await ctx.newPage();
+  p.on('pageerror', (e) => console.log(`PAGEERROR (${user}): ${e.message}`)); // a script error would leave a screen silently wrong
   await login(p, user);
   // Real focus: with emulation off, another page coming to the front blurs this one, as a desktop does.
   // Set after logging in: the override does not survive the navigations of the login.
@@ -69,7 +70,9 @@ async function shot(p: Page, name: string): Promise<void> {
 
 async function openRow(p: Page, truck: string): Promise<void> {
   await p.$eval(`#rows tr[data-truck="${truck}"] td.id`, (td) => (td as HTMLElement).click());
-  await p.waitForFunction((t) => document.getElementById('detail-title')?.textContent === t && !document.getElementById('detail')!.hidden, truck, { timeout: 5_000 });
+  // 15 s: the full browser suite runs its files in parallel, and on a loaded machine 5 s has not been enough.
+  await p.waitForFunction((t) => document.getElementById('detail-title')?.textContent === t && !document.getElementById('detail')!.hidden, truck, { timeout: 15_000 })
+    .catch(async (e) => { throw new Error(`${e.message}; page: ${JSON.stringify(await p.evaluate(() => ({ title: document.getElementById('detail-title')?.textContent, hidden: document.getElementById('detail')!.hidden, hash: location.hash, service: document.getElementById('service-link')?.textContent, rows: document.querySelectorAll('#rows tr').length })))}`); });
 }
 
 async function takeControl(p: Page, truck: string, force = false): Promise<void> {
