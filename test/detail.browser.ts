@@ -140,7 +140,7 @@ test('truck detail: Hold goes out as this operator; the timeline shows sent, ack
   await page.waitForSelector('#detail:not([hidden])');
   assert.equal(await page.textContent('#detail-title'), truck);
   const labels = await page.$$eval('#detail-buttons button', (bs) => bs.map((b) => b.textContent));
-  assert.deepEqual(labels, ['Hold', 'Resume', 'Return to bay', 'Exit zone', 'Take control']);
+  assert.deepEqual(labels, ['Hold', 'Resume', 'Return to bay', 'Exit zone', 'Take control'].map((l) => `${l} · ${truck}`), 'every button names the truck');
   for (const f of ['Faults', 'Clock', 'Drain', 'Controller restarts']) assert.match(await page.textContent('#detail-facts') ?? '', new RegExp(f));
 
   await page.click('#detail-buttons button[data-action="HOLD"]');
@@ -216,6 +216,46 @@ test('L8.4 the audit view: pick a truck and a time; every command around it, who
   assert.ok(rows.some((r) => r[1] === 'RESUME' && r[2] === 'priya (operator)'));
   await shot(marta, 'audit.png', '#audit');
   await marta.click('#audit-close');
+});
+
+test('the fleet table keeps its order under the pointer: a re-sort waits, contents still update, and the click opens the truck that was under it', { skip, timeout: 60_000 }, async () => {
+  if (await page.$('#detail:not([hidden])')) await page.click('#detail-close');
+  const order = () => page.$$eval('#rows > tr', (trs) => trs.map((t) => (t as HTMLElement).dataset.truck!));
+  const ids = await order();
+  // An ordinary live, tramming truck low in the table, to e-stop: it will jump up the table. The row
+  // just above it is the one under the pointer; every row between them would shift down.
+  const ordinary = async (id: string) => CLEAN.includes(id) && ![INSIDE, heldTruck, leased].includes(id)
+    && /^live$/.test(await page.textContent(`#rows tr[data-truck="${id}"] td.data`) ?? '')
+    && (await page.textContent(`#rows tr[data-truck="${id}"] td.why`) ?? '') === '';
+  let k = -1;
+  for (let i = ids.length - 1; i >= 2 && k < 0; i--) if (await ordinary(ids[i]!)) k = i;
+  assert.ok(k >= 2, `an ordinary truck low in the table: ${ids.join(' ')}`);
+  const stopped = ids[k]!;
+  const under = ids[k - 1]!;
+  await page.hover(`#rows tr[data-truck="${under}"] td.id`);
+  await page.waitForSelector('#order-paused:not([hidden])', { timeout: 2_000 });
+  const frozen = await order();
+  const box = (await (await page.$(`#rows tr[data-truck="${under}"] td.id`))!.boundingBox())!;
+
+  await marta.click(`#estop-trucks button[data-truck="${stopped}"]`);
+  await page.waitForFunction((t) => /ESTOPPED/.test(document.querySelector(`#rows tr[data-truck="${t}"]`)?.textContent ?? ''), stopped, { timeout: 15_000 });
+  assert.deepEqual(await order(), frozen, 'the order held while the pointer was on the table');
+  // Not only the order: the row's place on screen. Other rows' contents changed meanwhile, and they
+  // may not push it down while frozen.
+  const pointed = await page.evaluate(([x, y]) => (document.elementFromPoint(x as number, y as number)?.closest('[data-truck]') as HTMLElement | null)?.dataset.truck ?? null, [box.x + box.width / 2, box.y + box.height / 2]);
+  assert.equal(pointed, under, 'the same truck is still under the pointer');
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForFunction((t) => document.getElementById('detail-title')?.textContent === t && !document.getElementById('detail')!.hidden, under, { timeout: 5_000 });
+
+  // Opening the drawer took focus off the row, so a mouse click doesn't keep the table frozen. The
+  // pointer leaves: the table sorts again, and the e-stopped truck moves up.
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'detail-title');
+  await page.mouse.move(5, 5);
+  await page.waitForSelector('#order-paused[hidden]', { state: 'attached', timeout: 2_000 });
+  await page.waitForFunction(([t, k]) => [...document.querySelectorAll('#rows > tr')].findIndex((r) => (r as HTMLElement).dataset.truck === t) < (k as number), [stopped, k] as const, { timeout: 5_000 });
+  // Control: unfrozen, the same e-stop would have put another truck under the pointer.
+  assert.notEqual((await order())[k - 1], under);
+  await page.click('#detail-close');
 });
 
 test('the clearance panel during a link drop: UNSURE in full colour, the last call beneath it in grey with its age; the link-down interrupt', { skip, timeout: 60_000 }, async () => {

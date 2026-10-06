@@ -66,7 +66,7 @@
     </section>
 
     <section class="fleet" aria-label="Fleet">
-      <h2>Fleet <span class="hint">most urgent first · click a truck for its detail and commands</span></h2>
+      <h2>Fleet <span class="hint">most urgent first · click a truck for its detail and commands</span> <span id="order-paused" class="order-paused" hidden>order paused while you point at or tab through the table</span></h2>
       <table>
         <thead><tr><th>Truck</th><th>Data</th><th>Why here</th><th>State</th><th>Zone</th><th>Battery (pack's own %)</th><th>Control</th><th>Last command</th></tr></thead>
         <tbody id="rows"></tbody>
@@ -76,7 +76,7 @@
 
   <aside id="detail" class="drawer" aria-label="Truck detail" hidden>
     <div class="drawer-head">
-      <h2 id="detail-title">Truck</h2>
+      <h2 id="detail-title" tabindex="-1">Truck</h2>
       <button id="detail-close" type="button" class="close" aria-label="Close truck detail">Close ✕</button>
     </div>
     <div id="detail-summary" class="detail-summary"></div>

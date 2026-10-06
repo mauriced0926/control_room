@@ -329,3 +329,9 @@ td .held { display: block; font-size: 13px; color: var(--unsure); font-weight: 6
 .audit-table .inputs { font-size: 12px; color: var(--dim); font-family: var(--mono); }
 .answer { font-size: 17px; font-weight: 600; }
 p.bad { color: #ffd6d6; font-weight: 700; }
+.order-paused { margin-left: 10px; font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--unsure); border: 1px dashed var(--unsure); border-radius: 3px; padding: 1px 6px; }
+.order-paused::before { content: "⏸ "; }
+/* While the order is paused, rows keep their height: growing contents are cut short, not allowed to
+   push the row under the pointer down. A cut row is marked; its detail has everything. */
+#rows.frozen .cell { max-height: var(--h); overflow: hidden; }
+#rows tr.clipped td.id .cell::after { content: "more ⋯"; display: block; font: 600 11px var(--font); color: var(--unsure); }

@@ -248,16 +248,79 @@ function renderRows(snap: FleetSnapshot): void {
     if (!h) return null;
     return h.by ? `held by ${h.by === you?.id ? 'you: Resume in its detail' : h.by}` : 'held (by whom not known)';
   };
-  $('rows').replaceChildren(...fleetRows(snap, lastCommands(live), restarts).map((r) => el('tr', { class: `${r.dataKind}${r.vehicleId === openTruck ? ' open' : ''}`, 'data-truck': r.vehicleId, 'data-kind': r.dataKind, tabindex: '0', title: `Open ${r.vehicleId}` },
-    el('td', { class: 'id' }, r.vehicleId),
-    el('td', { class: 'data' }, r.data, r.restarted ? el('span', { class: 'restart', title: 'Controller restarted: its data is being used again; no action needed' }, `↻ ${r.restarted}`) : null),
-    el('td', { class: 'why' }, r.attention ?? ''),
-    el('td', {}, r.state, r.fault ? el('span', { class: 'fault' }, r.fault) : null),
-    el('td', {}, r.zone, r.zoneAlert ? el('br') : null, r.zoneAlert ? el('span', { class: 'zalert' }, r.zoneAlert) : null),
-    el('td', {}, r.soc, ...r.socFlags.map((f) => el('span', { class: 'flag' }, f))),
-    el('td', {}, r.control, heldWords(r.vehicleId) ? el('span', { class: 'held' }, heldWords(r.vehicleId)!) : null),
-    el('td', { class: 'cmd' }, r.lastCommand),
-  )));
+  const rows = fleetRows(snap, lastCommands(live), restarts);
+  // While the pointer is over the table or a row has keyboard focus, the order is frozen: a table
+  // that re-sorts under the pointer sends a click to another truck. Contents still update.
+  if (frozenOrder) {
+    const at = (id: string) => { const i = frozenOrder!.indexOf(id); return i < 0 ? Number.MAX_SAFE_INTEGER : i; };
+    rows.sort((a, b) => at(a.vehicleId) - at(b.vehicleId));
+    for (const r of rows) if (!frozenOrder.includes(r.vehicleId)) frozenOrder.push(r.vehicleId);
+  }
+  $('order-paused').hidden = frozenOrder === null;
+  const body = $('rows');
+  const have = new Map([...body.querySelectorAll<HTMLTableRowElement>(':scope > tr')].map((tr) => [tr.dataset.truck!, tr]));
+  const trs = rows.map((r) => {
+    // Rows keep their element between frames, so focus and hover stay on the same truck.
+    let tr = have.get(r.vehicleId);
+    if (!tr) tr = el('tr', { 'data-truck': r.vehicleId, tabindex: '0', title: `Open ${r.vehicleId}` });
+    tr.className = `${r.dataKind}${r.vehicleId === openTruck ? ' open' : ''}`;
+    tr.dataset.kind = r.dataKind;
+    tr.replaceChildren(...rowCells(r, heldWords));
+    return tr;
+  });
+  if (trs.length !== body.children.length || trs.some((tr, i) => body.children[i] !== tr)) {
+    const focused = document.activeElement;
+    body.replaceChildren(...trs);
+    if (focused instanceof HTMLElement && body.contains(focused) && document.activeElement !== focused) focused.focus();
+  }
+  // Frozen rows keep their height too, so contents that grow can't push the row under the pointer
+  // down. What no longer fits is cut short, marked, and in full in the truck's detail.
+  if (frozenOrder) for (const tr of trs) tr.classList.toggle('clipped', [...tr.querySelectorAll<HTMLElement>('.cell')].some((c) => c.scrollHeight > c.clientHeight + 1));
+}
+
+let frozenOrder: string[] | null = null;
+const FROZEN_CELL_PADDING = 15; // a cell's vertical padding and border (overview.css: td padding 7px)
+
+function setupRowFreeze(): void {
+  const table = $('rows').closest('table')!;
+  const body = $('rows');
+  const freeze = () => {
+    if (frozenOrder) return;
+    const trs = [...body.querySelectorAll<HTMLElement>(':scope > tr')];
+    frozenOrder = trs.map((tr) => tr.dataset.truck!);
+    for (const tr of trs) {
+      const h = tr.getBoundingClientRect().height;
+      tr.style.height = `${h}px`;
+      tr.style.setProperty('--h', `${Math.max(0, h - FROZEN_CELL_PADDING)}px`);
+    }
+    body.classList.add('frozen');
+    $('order-paused').hidden = false;
+  };
+  const thaw = () => {
+    if (table.matches(':hover') || table.contains(document.activeElement)) return;
+    frozenOrder = null;
+    body.classList.remove('frozen');
+    for (const tr of body.querySelectorAll<HTMLElement>(':scope > tr')) { tr.style.removeProperty('height'); tr.style.removeProperty('--h'); tr.classList.remove('clipped'); }
+    if (frame) renderRows(frame.snapshot);
+  };
+  table.addEventListener('pointerenter', freeze);
+  table.addEventListener('pointerleave', () => clock.setTimeout(thaw, 0));
+  table.addEventListener('focusin', freeze);
+  table.addEventListener('focusout', () => clock.setTimeout(thaw, 0));
+}
+
+function rowCells(r: ReturnType<typeof fleetRows>[number], heldWords: (id: string) => string | null): HTMLElement[] {
+  const td = (attrs: Record<string, string>, ...kids: Array<Node | string | null>) => el('td', attrs, el('div', { class: 'cell' }, ...kids));
+  return [
+    td({ class: 'id' }, r.vehicleId),
+    td({ class: 'data' }, r.data, r.restarted ? el('span', { class: 'restart', title: 'Controller restarted: its data is being used again; no action needed' }, `↻ ${r.restarted}`) : null),
+    td({ class: 'why' }, r.attention ?? ''),
+    td({}, r.state, r.fault ? el('span', { class: 'fault' }, r.fault) : null),
+    td({}, r.zone, r.zoneAlert ? el('br') : null, r.zoneAlert ? el('span', { class: 'zalert' }, r.zoneAlert) : null),
+    td({}, r.soc, ...r.socFlags.map((f) => el('span', { class: 'flag' }, f))),
+    td({}, r.control, heldWords(r.vehicleId) ? el('span', { class: 'held' }, heldWords(r.vehicleId)!) : null),
+    td({ class: 'cmd' }, r.lastCommand),
+  ];
 }
 
 // ---- player controls ----
@@ -581,6 +644,9 @@ function openDetail(id: string): void {
   if (location.hash !== `#truck=${id}`) history.replaceState(null, '', `#truck=${id}`);
   ask({ type: 'watch', vehicleId: id }, () => undefined);
   renderDetail();
+  // Focus goes to the drawer, which names the truck: and off the row, so a mouse click does not
+  // keep the table's order frozen after the pointer leaves.
+  $('detail-title').focus({ preventScroll: true });
   if (frame) renderRows(frame.snapshot);
 }
 
@@ -631,7 +697,7 @@ function renderDetail(): void {
       e.addEventListener('click', () => command(id, btn));
       buttonEls.set(key, e);
     }
-    e.textContent = b.label;
+    e.textContent = `${b.label} · ${id}`; // the truck in every button: a wrong drawer shows before anything is sent
     e.className = `cmd${b.primary ? ' primary' : ''}`;
     e.disabled = b.disabled !== undefined;
     e.title = b.disabled ?? b.note ?? '';
@@ -656,7 +722,7 @@ function renderDetail(): void {
 }
 
 function resumeButton(id: string): HTMLButtonElement {
-  const b = el('button', { type: 'button', class: 'cmd primary resume-now' }, 'Resume');
+  const b = el('button', { type: 'button', class: 'cmd primary resume-now' }, `Resume · ${id}`);
   b.addEventListener('click', () => command(id, { action: 'RESUME', label: 'Resume' }));
   return b;
 }
@@ -773,6 +839,7 @@ if (LIVE) {
   $('live-bar').hidden = false;
   $('tray').hidden = false;
   setupLiveScreens();
+  setupRowFreeze();
   const m = /^#truck=([\w.-]{1,64})$/.exec(location.hash);
   if (m) openTruck = m[1]!;
   $('estop-trucks').hidden = false;
