@@ -420,3 +420,20 @@ test('L1.2 a full blast cycle (CLOSING, CLOSED, OPEN) through the engine runs in
   assert.ok(warm.sent.includes('EXIT_ZONE') && warm.sent.includes('RESUME'), `the engine acted: ${warm.sent.join(',')}`);
   assert.ok(warm.ms < 100, `took ${warm.ms.toFixed(1)} ms (cold: ${cold.ms.toFixed(1)} ms)`);
 });
+
+test('B12 / B16 a frozen truck the system held is resumed once no zone is closing, though its HOLD could never be verified; the next blast gets a new HOLD', () => {
+  const probe = blastRig({ seed: 7, blasts: 'none' });
+  probe.advance(9_000);
+  const victim = inside(probe, 'DECLINE').find((v) => probe.gw.truth(v).state === 'TRAMMING')!;
+  probe.cleanup();
+  const r = blastRig({ seed: 7, blasts: [{ zoneId: 'DECLINE', atMs: 10_000, closedForMs: 40_000 }, { zoneId: 'TIP', atMs: 250_000, closedForMs: 40_000 }], faults: { frozenMoving: { vehicle: victim, atMs: 4_000 } } });
+  try {
+    r.until(() => r.gw.zone('DECLINE').status === 'OPEN' && r.clock.now() > T0 + 100_000, 300_000);
+    r.advance(PARAMS.autoResumeWithin.value);
+    const acts = () => systemLines(r).filter((c) => c.vehicle_id === victim).map((c) => `${c.action} ${c.operator_id}`);
+    assert.ok(acts().includes('RESUME system:B12'), `resumed: ${acts().join(', ')}`);
+    const before = acts().filter((a) => a.startsWith('HOLD')).length;
+    r.until(() => r.gw.zone('TIP').status === 'CLOSED', 300_000);
+    assert.ok(acts().filter((a) => a.startsWith('HOLD')).length > before, 'held again for the next blast: the old unverified HOLD does not count as in flight');
+  } finally { r.cleanup(); }
+});

@@ -355,6 +355,7 @@ export class BlastEngine {
   readonly #listeners = new Set<(e: BlastEvent) => void>();
   readonly #plans = new Map<string, TruckPlan>();
   readonly #open = new Map<string, Map<string, CommandRecord>>(); // open commands per truck, from registry events
+  readonly #lastSent = new Map<string, number>(); // when the engine last submitted anything to each truck
   readonly #dirty = new Set<string>();
   readonly #unsub: Array<() => void> = [];
   #all = false;
@@ -380,6 +381,13 @@ export class BlastEngine {
       if (!m) this.#open.set(r.vehicleId, (m = new Map()));
       m.set(r.id, r);
     } else m?.delete(r.id);
+  }
+
+  // A command that can't be verified (B16) stays open until the truck's data returns. It still counts
+  // as in flight, so the engine doesn't send it again and again, until the engine has sent the truck
+  // anything newer (a B12 RESUME, say): then its HOLD for the next blast is a new command.
+  #stillCounts(r: CommandRecord): boolean {
+    return r.status !== 'unverified' || (this.#lastSent.get(r.vehicleId) ?? -Infinity) <= r.createdMs;
   }
 
   #openOn(vehicleId: string): CommandRecord[] {
@@ -459,9 +467,13 @@ export class BlastEngine {
     this.#soonTimer = this.#o.clock.setTimeout(() => { this.#soonTimer = null; this.#run(); }, 0);
   }
 
-  #busyWith(): boolean {
+  #anyNotOpen(): boolean {
     for (const z of this.#zones.values()) if (z.status !== 'OPEN') return true;
-    return this.#holds.size > 0 || this.#alarms.size > 0;
+    return false;
+  }
+
+  #busyWith(): boolean {
+    return this.#anyNotOpen() || this.#holds.size > 0 || this.#alarms.size > 0;
   }
 
   #run(): void {
@@ -475,14 +487,17 @@ export class BlastEngine {
     if (!site) return;
     this.#busy = true;
     try {
-      const snap = all ? this.#o.fleet.snapshot() : null;
-      const trucks = snap ? snap.trucks : ids.map((id) => this.#o.fleet.truck(id)).filter((t): t is TruckView => !!t);
+      // With every zone open only the trucks it holds (to resume) and has alarms for need a look.
+      const zonesBusy = this.#anyNotOpen();
+      const snap = all && zonesBusy ? this.#o.fleet.snapshot() : null;
+      const some = all && !zonesBusy
+        ? [...new Set([...this.#holds.keys(), ...[...this.#alarms.values()].map((a) => a.vehicleId).filter((x): x is string => x !== null)])]
+        : ids;
+      const trucks = snap ? snap.trucks : some.map((id) => this.#o.fleet.truck(id)).filter((t): t is TruckView => !!t);
       const ctx = this.#context(site);
       for (const t of trucks) this.#evaluateTruck(ctx, t);
-      if (snap) {
-        this.#linkAlarm();
-        this.clearances(snap);
-      }
+      if (all) this.#linkAlarm();
+      if (snap) this.clearances(snap);
     } finally {
       this.#busy = false;
     }
@@ -545,7 +560,7 @@ export class BlastEngine {
       if (this.#holds.has(v)) this.#addHold(t, holdFor, null);
       return;
     }
-    if (open.some((r) => r.action === w.action)) return; // in flight already
+    if (open.some((r) => r.action === w.action && this.#stillCounts(r))) return; // in flight already
     // A truck we are getting out that goes quiet is not stopped mid-way by B1: a HOLD could leave it
     // inside, and the EXIT_ZONE already sent can't be recalled anyway (B7). It stays UNSURE.
     if (w.rule === 'B1' && open.some((r) => r.action === 'EXIT_ZONE' && r.actor.kind === 'system')) return;
@@ -553,6 +568,7 @@ export class BlastEngine {
     const closed = this.#closedAt.get(v);
     if (closed && closed.action === w.action && this.#o.clock.now() - closed.atMs < PARAMS.blastCommandCooldown.value) return;
     if (!this.#o.link.isUp()) return; // B13: nothing can be sent; on reconnect we decide again at once
+    this.#lastSent.set(v, this.#o.clock.now());
     const rec = reg.submit({ vehicleId: v, action: w.action, why: w.why }, this.#actor(w.rule, w.inputs));
     if (rec.status === 'refused') {
       this.#closedAt.set(v, { action: w.action, atMs: this.#o.clock.now() });
@@ -613,7 +629,7 @@ export class BlastEngine {
     const state = t.state?.value ?? null;
     const inputs = { zones: h.zones, rules: h.rules, heldSinceServerMs: h.sinceServerMs, state, confidence: t.confidence };
     // An EXIT_ZONE under way is stopped with HOLD, never RESUME (B7: refused while a task runs).
-    const open = this.#openOn(v).filter((r) => !(r.action === 'EXIT_ZONE' && r.started));
+    const open = this.#openOn(v).filter((r) => !(r.action === 'EXIT_ZONE' && r.started) && r.status !== 'unverified');
     if (t.task?.value === 'EXIT_ZONE' && !open.some((r) => r.action === 'HOLD')) { this.#issueResume(t, 'HOLD', 'still carrying out EXIT_ZONE: HOLD first, then RESUME (B7)', inputs); return; }
     if (open.length) return; // something of ours (or anyone's) still on its way: B7, don't race it
     if (state === 'HOLDING' || (UNSURE.has(t.confidence) && state !== 'IDLE')) { this.#issueResume(t, 'RESUME', `${h.zones.join(', ')} reopened`, inputs); return; }
@@ -625,6 +641,7 @@ export class BlastEngine {
     const closed = this.#closedAt.get(t.vehicleId);
     if (closed && closed.action === action && this.#o.clock.now() - closed.atMs < PARAMS.blastCommandCooldown.value) return;
     if (!this.#o.link.isUp()) return;
+    this.#lastSent.set(t.vehicleId, this.#o.clock.now());
     const rec = this.#o.registry.submit({ vehicleId: t.vehicleId, action, why }, this.#actor('B12', inputs));
     if (rec.status === 'refused') this.#closedAt.set(t.vehicleId, { action, atMs: this.#o.clock.now() });
     this.#log(`blast B12: ${action} ${t.vehicleId}: ${why}${rec.status === 'refused' ? ` (refused: ${rec.failure?.message ?? ''})` : ''}`);
@@ -709,7 +726,7 @@ export class BlastEngine {
   #linkEvent(e: LinkEvent): void {
     if (e.type === 'up' || e.type === 'down') this.#soon();
     else if (e.type === 'message' && e.msg.type === 'telemetry' && typeof e.msg.vehicle_id === 'string') {
-      if (this.#busyWith()) this.#soon(e.msg.vehicle_id);
+      if (this.#anyNotOpen() || this.#holds.has(e.msg.vehicle_id)) this.#soon(e.msg.vehicle_id);
     }
   }
 
