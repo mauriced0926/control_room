@@ -255,6 +255,7 @@ test('L7.3 forced takeover mid-drive: the first driver sees who took it and when
   await sleep(1_000);
   assert.ok(truth(SHARED).speedMps > 0, 'marta drives it');
   await dave.click(`#estop-trucks button[data-truck="${SHARED}"]`); // dave's page is behind: a click needs no focus
+  assert.equal(await marta.getAttribute('#drive-estop', 'aria-label'), `E-stop ${SHARED}`, 'the driver has the truck\'s own stop beside the keys too');
   const stopAt = Date.now();
   await waitFor(() => truth(SHARED).state === 'ESTOPPED', 5_000, 'e-stopped');
   await marta.waitForFunction(() => /was e-stopped by dave at \d\d:\d\d:\d\d; your control ended\./.test(document.getElementById('detail-callout')!.textContent!), null, { timeout: 5_000 });

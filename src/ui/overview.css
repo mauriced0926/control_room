@@ -338,7 +338,7 @@ p.bad { color: #ffd6d6; font-weight: 700; }
 
 /* ---- driving (UI.md screen 3) ---- */
 .drive-panel { margin: 10px 0; padding: 12px 14px; border: 2px solid var(--truck); border-radius: 8px; background: var(--panel-2); }
-.drive-head { font-size: 20px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.drive-head { font-size: 20px; display: flex; align-items: center; gap: 10px; }
 .drive-sending { font-size: 14px; font-weight: 700; padding: 1px 8px; border-radius: 4px; border: 1px solid var(--line); }
 .drive-sending[data-on="true"] { color: var(--clear); border-color: var(--clear); }
 .drive-sending[data-on="false"] { color: var(--closing); border-color: var(--closing); }
@@ -369,3 +369,5 @@ kbd { font-family: var(--mono); background: var(--panel); border: 1px solid var(
 .drive-limit { margin: 6px 0; font-weight: 700; color: #ffe2a0; }
 .drive-done { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
 .callout.lost { border-color: var(--notclear); font-weight: 600; }
+.drawer button.drive-estop { margin-left: auto; flex: 0 0 auto; width: 56px; height: 56px; padding: 0; border: 0; border-radius: 0; color: #fff; font-size: 13px; font-weight: 800; cursor: pointer; background: var(--notclear);
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%); }

@@ -829,6 +829,8 @@ function keyOf(e: KeyboardEvent): 'FWD' | 'REV' | null {
 }
 
 function setupDriving(): void {
+  // The driven truck's own e-stop beside the keys: the drawer can cover the header's row of stops.
+  $('drive-estop').addEventListener('click', () => { if (driveTruck) estop(driveTruck); });
   $('drive-steps').replaceChildren(...THROTTLE_STEPS.map((x, i) => {
     const b = el('button', { type: 'button', 'data-step': String(x), title: `Key ${i + 1}` }, `${x * 100} %`);
     b.addEventListener('click', () => { setStep(x); b.blur(); });
@@ -893,17 +895,19 @@ function renderDrive(): void {
   });
   const throttle = throttleFor(held, step);
   $('drive-headline').textContent = p.headline;
+  $('drive-estop').setAttribute('aria-label', `E-stop ${driveTruck}`);
   const sending = $('drive-sending');
   const asked = held ? `${held === 'FWD' ? 'forward' : 'reverse'} ${Math.round(Math.abs(throttle) * 100)} %` : '';
-  sending.textContent = driveTimer === null ? 'NOT sending' : !held ? 'sending stop (0) at 10 Hz' : v.refusal?.current ? `asking ${asked}: sent as a stop` : `sending ${asked}`;
-  sending.dataset.on = String(driveTimer !== null && !(held && v.refusal?.current));
+  const reply = lastDriveReply && clock.now() - lastDriveReply.at < 2_000 ? lastDriveReply.text : null; // the relay's answer, ahead of the next frame
+  const stopped = !!held && (v.refusal?.current === true || reply !== null);
+  sending.textContent = driveTimer === null ? 'NOT sending' : !held ? 'sending stop (0) at 10 Hz' : stopped ? `asking ${asked}: sent as a stop` : `sending ${asked}`;
+  sending.dataset.on = String(driveTimer !== null && !stopped);
   box.dataset.streaming = String(driveTimer !== null);
   box.dataset.held = held ?? '';
   const st = v.echo.stats; // the relay's round trips on this lease, for the record (and the tests)
   box.dataset.echoStats = `${st.samples} ${st.p50Ms ?? ''} ${st.p95Ms ?? ''} ${st.maxMs ?? ''}`;
   box.title = st.samples ? `Round trips this drive: ${st.samples}, median ${st.p50Ms} ms, 95th percentile ${st.p95Ms} ms, worst ${st.maxMs} ms` : '';
   for (const b of $('drive-steps').querySelectorAll<HTMLButtonElement>('button')) b.setAttribute('aria-pressed', String(Number(b.dataset.step) === step));
-  const reply = lastDriveReply && clock.now() - lastDriveReply.at < 2_000 ? lastDriveReply.text : null;
   const refusal = p.refusal ?? reply;
   $('drive-refusal').hidden = refusal === null;
   $('drive-refusal').textContent = refusal ?? '';
