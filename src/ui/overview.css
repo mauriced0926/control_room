@@ -338,7 +338,8 @@ p.bad { color: #ffd6d6; font-weight: 700; }
 
 /* ---- driving (UI.md screen 3) ---- */
 .drive-panel { margin: 10px 0; padding: 12px 14px; border: 2px solid var(--truck); border-radius: 8px; background: var(--panel-2); }
-.drive-head { font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.drive-head { font-size: 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.drive-head b { white-space: nowrap; }
 .drive-sending { font-size: 14px; font-weight: 700; padding: 1px 8px; border-radius: 4px; border: 1px solid var(--line); }
 .drive-sending[data-on="true"] { color: var(--clear); border-color: var(--clear); }
 .drive-sending[data-on="false"] { color: var(--closing); border-color: var(--closing); }
