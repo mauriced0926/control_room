@@ -82,15 +82,22 @@ test('L2.57 the last safe moment: fixed by the path, and Infinity when the truck
   const p = predictPath(site, start({ positionM: end, state: 'LOADING', stateSinceMs: NOW - 10_000 }), 'late', NOW + 600_000);
   const lsm = lastSafeMoment(site, p, 'DRAW_12', NOW, NOW + 30_000);
   assert.equal(lsm, Infinity, 'the load ends and it leaves forward before any command is needed');
-  // An empty truck tramming into DECLINE with 120 s left: EXIT_ZONE back costs more each second
-  // until it is past the middle; the last moment is when reverse distance + delay just fits.
+  // An empty truck tramming into DECLINE, 60 s to go: EXIT_ZONE back costs more each second until
+  // it is past the middle. Sent at t, it acts at t + 6 from 1 + 3(t + 6) m in, reversing at 3 m/s:
+  // t + 6 + (1 + 3(t + 6))/3 <= 60, so t <= ~23.8 s.
   const dec = site.zone('DECLINE')!.ranges[0]!;
   const p2 = predictPath(site, start({ positionM: dec.startM + 1 }), 'late', NOW + 600_000);
   const lsm2 = lastSafeMoment(site, p2, 'DECLINE', NOW, NOW + 60_000)!;
-  // At time t it is 1 + 3t m in; reverse at 3 m/s: t + 6 + (1 + 3t)/3 <= 60 -> t <= ~26.8 s
   assert.ok(lsm2 !== null && Number.isFinite(lsm2));
-  assert.ok(close((lsm2 - NOW) / 1000, 26.8, 0.3), `${(lsm2 - NOW) / 1000}`);
+  assert.ok(close((lsm2 - NOW) / 1000, 23.8, 0.3), `${(lsm2 - NOW) / 1000}`);
   assert.equal(lastSafeMoment(site, p2, 'DECLINE', NOW, NOW + 5_000), null, 'not even now');
+  // Empty, 10 m into the draw point: out on its own after loading, at ~36.7 s, inside a 40 s budget.
+  // An EXIT_ZONE that arrives during loading queues behind it and runs when it ends (re-probe Q1), so
+  // it still works; the last moment is the deadline less the command delay (34 s). If the truck is
+  // still inside then, B2 sends EXIT_ZONE, though the path says it is about to leave.
+  const p3 = predictPath(site, start({ positionM: draw.startM + 10 }), 'late', NOW + 600_000);
+  const lsm3 = lastSafeMoment(site, p3, 'DRAW_12', NOW, NOW + 40_000)!;
+  assert.ok(close((lsm3 - NOW) / 1000, 34, 0.3), `${(lsm3 - NOW) / 1000}`);
 });
 
 test('a different site: duty stops from segment kinds, a zone split over two segments, and the wrap', () => {

@@ -229,27 +229,33 @@ export function visits(site: Site, pieces: readonly Piece[], untilMs = Infinity)
   return out;
 }
 
-// EXIT_ZONE from a point on the path: work it is queued behind, the command delay, then the distance
-// to the nearer boundary at the speed for that direction and load.
-export function exitZoneTimeMs(site: Site, at: { positionM: number; loaded: boolean; piece: Piece }, t: number, bound: Bound): number {
+// EXIT_ZONE sent at time t, carried out the full command delay later from wherever the path has the
+// truck by then (still moving, or queued behind the work it has started: re-probe Q1 and Q3), then
+// the distance to the nearer boundary at the speed for that direction and load. The time from t
+// until it is out of `zoneId`; the delay alone if the path is out by itself first.
+export function exitZoneTimeMs(site: Site, pieces: readonly Piece[], zoneId: string, t: number, bound: Bound): number {
+  const delay = PARAMS.supervisoryDelayMax.value;
+  const te = t + delay;
+  const at = positionAt(site, pieces, te);
+  if (site.zoneAt(at.positionM)?.zoneId !== zoneId) return delay;
   const e = zoneExit(site, at.positionM);
-  if (!e) return 0;
-  const queued = at.piece.kind === 'stop' && at.piece.stop !== 'STOPPED' ? Math.max(0, at.piece.t1 - t) : 0;
+  if (!e) return delay;
+  const queued = at.piece.kind === 'stop' && at.piece.stop !== 'STOPPED' ? Math.max(0, at.piece.t1 - te) : 0;
   const dir: 1 | -1 = e.direction === 'FWD' ? 1 : -1;
-  return queued + timeToClearMs(e.distanceM, { loaded: at.loaded, direction: e.direction, speedMps: taskSpeed(at.loaded, dir, bound) });
+  return delay + queued + timeToClearMs(e.distanceM, { loaded: at.loaded, direction: e.direction, speedMps: taskSpeed(at.loaded, dir, bound), delayMs: 0 });
 }
 
-// BLAST.md B2: the latest moment at which EXIT_ZONE, from where the path will then be, still gets the
-// truck out of `zoneId` by `deadlineMs`. Null if not even now. Sampled at `stepMs`; the condition only
-// gets harder as time passes on any one path (moving away from the near boundary costs as much time
-// as it uses; a stop uses time and gains nothing), so the first failure ends the search. Infinity
-// if the path is out of the zone before EXIT_ZONE would ever be needed.
+// BLAST.md B2: the latest moment at which EXIT_ZONE, sent then, still gets the truck out of `zoneId`
+// by `deadlineMs`. Null if not even now. Sampled at `stepMs`; the condition only gets harder as time
+// passes on any one path (moving away from the near boundary costs as much time as it uses; a stop
+// uses time and gains nothing), so the first failure ends the search. Infinity if the path is out
+// of the zone before EXIT_ZONE would ever be needed.
 export function lastSafeMoment(site: Site, pieces: readonly Piece[], zoneId: string, nowMs: number, deadlineMs: number, stepMs = 250): number | null {
   let best: number | null = null;
   for (let t = nowMs; t <= deadlineMs; t += stepMs) {
     const at = positionAt(site, pieces, t);
     if (site.zoneAt(at.positionM)?.zoneId !== zoneId) return Infinity; // out on its own first
-    if (t + exitZoneTimeMs(site, at, t, 'late') > deadlineMs) return best;
+    if (t + exitZoneTimeMs(site, pieces, zoneId, t, 'late') > deadlineMs) return best;
     best = t;
   }
   return best;
