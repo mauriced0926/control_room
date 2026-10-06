@@ -193,6 +193,7 @@ export interface DriveRelayOptions {
 }
 
 const MAX_ROUND_TRIPS = 600; // a minute at 10 Hz
+const SITE_REJECTED_SHOWN_MS = 2_000; // the gateway repeats drive_rejected at most once a second per reason
 const isInt = (x: unknown): x is number => typeof x === 'number' && Number.isSafeInteger(x);
 
 export class DriveRelay {
@@ -325,7 +326,7 @@ export class DriveRelay {
         },
         deadman: mine && c ? c.deadman : null,
         refusal: live?.refusal ?? null,
-        siteRejected: rej && rej.atServerMs >= l.sinceServerMs ? rej : null,
+        siteRejected: rej && rej.atServerMs >= l.sinceServerMs && snap.atServerMs - rej.atServerMs < SITE_REJECTED_SHOWN_MS ? rej : null,
         relayed: live?.relayed ?? 0, dropped: live?.dropped ?? 0,
         topSpeedMps: top?.mps ?? null, limp: top?.limp ?? false,
         ahead: { FWD: ahead('FWD'), REV: ahead('REV') },
@@ -339,7 +340,8 @@ export class DriveRelay {
     const lane = v ? this.#lanes.get(v) : undefined;
     const c = m.control as Record<string, unknown> | undefined;
     if (!lane || !c || typeof c !== 'object' || !isInt(c.last_drive_seq) || typeof c.last_drive_sent_ms !== 'number') return;
-    if (c.operator_id !== lane.operatorId || c.last_drive_seq === lane.lastEchoSeq || c.last_drive_seq > lane.seq) return;
+    // Only a newer echo: a late, reordered report of an older one would count its delay twice.
+    if (c.operator_id !== lane.operatorId || c.last_drive_seq <= (lane.lastEchoSeq ?? 0) || c.last_drive_seq > lane.seq) return;
     lane.lastEchoSeq = c.last_drive_seq;
     lane.roundTrips.push(this.#o.fleet.serverNow() - c.last_drive_sent_ms);
     if (lane.roundTrips.length > MAX_ROUND_TRIPS) lane.roundTrips.shift();

@@ -12,7 +12,7 @@
 // names the operator: the service takes that from the session. It never queues a command it could not
 // send: with the service disconnected it says so, and nothing is sent later.
 import { HOLD_THE_SHOT } from '../clearance.ts';
-import { SystemClock } from '../clock.ts';
+import { SystemClock, type TimerHandle } from '../clock.ts';
 import { age, elapsed } from '../words.ts';
 import { PARAMS } from '../params.ts';
 import type { FleetSnapshot } from '../fleet.ts';
@@ -20,6 +20,7 @@ import type { AlarmItem } from '../attention.ts';
 import type { CommandView, LiveState, Notice, TruckDetail } from '../live.ts';
 import type { AuditLine } from './audit.ts';
 import { buttons, timelineEntry, truckFacts, type Button } from './detail.ts';
+import { DRIVE_KEYS, drivePanel, holderWords, lostWords, THROTTLE_STEPS, throttleFor, type Meter } from './drive.ts';
 import { CallMemory, clearanceRows, fleetRows, serviceLink, siteLink, type ClearanceRow, type LinkView } from './overview.ts';
 import { tonePattern, toSound, trayModel, type TrayEntry } from './tray.ts';
 import { trackModel, type SiteData, type TrackModel } from './track.ts';
@@ -467,7 +468,7 @@ async function reconnect(): Promise<void> {
   connectLive();
 }
 
-interface Result { type: 'result'; ref: string | null; ok: boolean; error?: string; command?: CommandView; history?: { lines: AuditLine[]; truncated: boolean; atServerMs: number } }
+interface Result { type: 'result'; ref: string | null; ok: boolean; error?: string; command?: CommandView; drive?: { code: string | null; reason: string | null }; history?: { lines: AuditLine[]; truncated: boolean; atServerMs: number } }
 const asked = new Map<string, string>(); // ref -> truck, for e-stops sent and not yet answered
 let refN = 0;
 
@@ -476,6 +477,7 @@ const handlers = new Map<string, (m: Result) => void>(); // ref -> what to do wi
 function onResult(m: Result): void {
   const h = m.ref ? handlers.get(m.ref) : undefined;
   if (h) { handlers.delete(m.ref!); h(m); return; }
+  if (m.drive) { lastDriveReply = { text: m.error ?? m.drive.reason ?? 'refused', at: clock.now() }; renderDrive(); return; }
   const truck = m.ref ? asked.get(m.ref) : undefined;
   if (m.ref) asked.delete(m.ref);
   if (!m.ok && truck) estopNote(`E-stop ${truck} NOT sent: ${m.error ?? m.command?.summary ?? 'refused'}`, true);
@@ -652,6 +654,8 @@ function openDetail(id: string): void {
 
 function closeDetail(): void {
   openTruck = null;
+  updateDriving();
+  renderDrive();
   detail = null;
   $('detail').hidden = true;
   document.body.classList.remove('drawer-open');
@@ -663,6 +667,8 @@ function closeDetail(): void {
 const buttonEls = new Map<string, HTMLButtonElement>(); // kept between frames so a press is never lost to a redraw
 
 function renderDetail(): void {
+  updateDriving();
+  renderDrive();
   const id = openTruck;
   const live = frame?.live;
   if (!id || !live || !frame) return;
@@ -682,8 +688,10 @@ function renderDetail(): void {
   const callout = $('detail-callout');
   const c = t.control?.value;
   if (held && held.by && held.by === me) callout.replaceChildren(el('div', { class: 'callout held' }, `Held by you: you ${held.how}. It will not move until someone resumes it.`, resumeButton(id)));
-  else if (c?.mode === 'MANUAL' && c.operatorId === me) callout.replaceChildren(el('div', { class: 'callout mine' }, 'You have control. Driving from the browser is not in this build. Release control to hand it back: it will then hold, and Resume sends it on.'));
-  else if (c?.mode === 'MANUAL' && c.operatorId) callout.replaceChildren(el('div', { class: 'callout other' }, `${c.operatorId} is driving ${id}. Commands from anyone else are refused until they hand it back.`));
+  else if (driveTruck === id) callout.replaceChildren();
+  else if (lostWords(live.leaseEnds[id], me, timeOf) && !(c?.mode === 'MANUAL' && c.operatorId === me)) callout.replaceChildren(el('div', { class: 'callout lost' }, lostWords(live.leaseEnds[id], me, timeOf)!));
+  else if (c?.mode === 'MANUAL' && c.operatorId === me) callout.replaceChildren(el('div', { class: 'callout mine' }, 'You have control, but this service has no lease for you yet. Press Take control again to drive.'));
+  else if (c?.mode === 'MANUAL' && c.operatorId) callout.replaceChildren(el('div', { class: 'callout other' }, holderWords(c.operatorId, id)));
   else if (held) callout.replaceChildren(el('div', { class: 'callout' }, `Holding: ${held.by ? `${held.by} ${held.how}` : held.how}.`));
   else callout.replaceChildren();
 
@@ -742,6 +750,176 @@ function command(id: string, b: Pick<Button, 'action' | 'label' | 'force'>): voi
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const dateFmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }); // yyyy-mm-dd
 function timeOf(ms: number): string { return timeFmt.format(ms); }
+
+// ---- driving (UI.md screen 3) ----
+//
+// While this screen holds the lease on the open truck, it streams input at 10 Hz: the held key's
+// throttle, or 0 when no key is held, so the lease stays alive while the operator thinks. A key press
+// or release goes at once and restarts the 10 Hz beat. If the window loses focus or is hidden, it
+// sends 0 once and stops: the browser never sends keyup then, so a held key would otherwise keep the
+// truck moving (L7.5). Nothing is queued: with the service disconnected, nothing is sent at all.
+let driveTruck: string | null = null;
+let held: 'FWD' | 'REV' | null = null;
+let step: number = PARAMS.driveDefaultThrottle.value;
+let lastDir: 'FWD' | 'REV' = 'FWD';
+let driveN = 0;
+let driveSent = 0;
+let driveTimer: TimerHandle | null = null;
+let paused = false; // stopped on blur or hide, until the window is back in front
+let lastDriveReply: { text: string; at: number } | null = null;
+
+function myLease(id: string | null): boolean {
+  return !!id && !!you && (frame?.live?.leases ?? []).some((l) => l.vehicleId === id && l.operatorId === you!.id);
+}
+
+function updateDriving(): void {
+  const want = openTruck && myLease(openTruck) ? openTruck : null;
+  if (want !== driveTruck) {
+    stopStream(true);
+    driveTruck = want;
+    held = null;
+    lastDriveReply = null;
+  }
+  if (driveTruck && !driveTimer && !paused) beat();
+}
+
+function sendDrive(throttle: number): void {
+  if (!driveTruck) return;
+  if (send({ type: 'drive', vehicleId: driveTruck, throttle, n: ++driveN }) === null) return;
+  driveSent++;
+  document.body.dataset.driveSent = String(driveSent); // for tests: every input this screen sent
+  document.body.dataset.driveLast = String(throttle);
+}
+
+function beat(): void {
+  if (driveTimer) clock.clearTimeout(driveTimer);
+  driveTimer = null;
+  if (!driveTruck || paused) return;
+  sendDrive(throttleFor(held, step));
+  driveTimer = clock.setTimeout(beat, PARAMS.driveInterval.value);
+}
+
+function stopStream(sendZero: boolean): void {
+  if (driveTimer) clock.clearTimeout(driveTimer);
+  const was = driveTimer !== null;
+  driveTimer = null;
+  held = null;
+  if (sendZero && was) sendDrive(0);
+}
+
+function pause(): void {
+  if (!driveTruck || paused) return;
+  paused = true;
+  stopStream(true);
+  renderDrive();
+}
+
+function unpause(): void {
+  if (!paused) return;
+  paused = false;
+  held = null;
+  updateDriving();
+  renderDrive();
+}
+
+function keyOf(e: KeyboardEvent): 'FWD' | 'REV' | null {
+  if ((DRIVE_KEYS.forward as readonly string[]).includes(e.key)) return 'FWD';
+  if ((DRIVE_KEYS.reverse as readonly string[]).includes(e.key)) return 'REV';
+  return null;
+}
+
+function setupDriving(): void {
+  $('drive-steps').replaceChildren(...THROTTLE_STEPS.map((x, i) => {
+    const b = el('button', { type: 'button', 'data-step': String(x), title: `Key ${i + 1}` }, `${x * 100} %`);
+    b.addEventListener('click', () => { setStep(x); b.blur(); });
+    return b;
+  }));
+  document.addEventListener('keydown', (e) => {
+    if (!driveTruck) return;
+    if ((e.target as Element).closest?.('input, select, textarea')) return;
+    const n = Number(e.key);
+    if (Number.isInteger(n) && n >= 1 && n <= THROTTLE_STEPS.length) { setStep(THROTTLE_STEPS[n - 1]!); return; }
+    const d = keyOf(e);
+    if (!d) return;
+    e.preventDefault();
+    if (paused) unpause(); // a key reached this window: it is in front again
+    if (e.repeat && held === d) return;
+    if (held !== d) lastDriveReply = null; // a new direction: the last refusal was about the old one
+    held = d;
+    lastDir = d;
+    beat();
+    renderDrive();
+  });
+  document.addEventListener('keyup', (e) => {
+    const d = keyOf(e);
+    if (!driveTruck || !d || held !== d) return;
+    e.preventDefault();
+    held = null;
+    beat();
+    renderDrive();
+  });
+  window.addEventListener('blur', pause);
+  window.addEventListener('pagehide', pause);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') pause(); else if (document.hasFocus()) unpause(); });
+  window.addEventListener('focus', unpause);
+}
+
+function setStep(x: number): void {
+  step = x;
+  if (held) beat();
+  renderDrive();
+}
+
+function setMeter(id: string, m: Meter, threshold: number): void {
+  const box = $(id);
+  box.dataset.level = m.level;
+  box.dataset.ms = m.ms === null ? '' : String(Math.round(m.ms));
+  box.querySelector<HTMLElement>('.fill')!.style.width = `${Math.round(m.fraction * 100)}%`;
+  box.querySelector<HTMLElement>('.mark')!.style.left = `${threshold * 100}%`;
+  box.querySelector<HTMLElement>('.val')!.textContent = m.text;
+}
+
+function renderDrive(): void {
+  const box = $('drive-panel');
+  const live = frame?.live;
+  const v = driveTruck && live ? live.drives.find((d) => d.vehicleId === driveTruck) : undefined;
+  if (!driveTruck || !v || !frame) { box.hidden = true; return; }
+  box.hidden = false;
+  const t = frame.snapshot.trucks.find((x) => x.vehicleId === driveTruck);
+  const p = drivePanel({
+    view: v, truck: t, sinceFrameMs: lastFrameAt === null ? 0 : clock.now() - lastFrameAt,
+    siteLinkDown: siteLink(frame.snapshot).state === 'down', serviceDown: serviceDown(),
+    direction: held ?? (t?.speedMps?.value ? t.direction?.value ?? lastDir : lastDir), streaming: driveTimer !== null,
+  });
+  const throttle = throttleFor(held, step);
+  $('drive-headline').textContent = p.headline;
+  const sending = $('drive-sending');
+  sending.dataset.on = String(driveTimer !== null);
+  sending.textContent = driveTimer === null ? 'NOT sending' : held ? `sending ${held === 'FWD' ? 'forward' : 'reverse'} ${Math.round(Math.abs(throttle) * 100)} %` : 'sending stop (0) at 10 Hz';
+  box.dataset.streaming = String(driveTimer !== null);
+  box.dataset.held = held ?? '';
+  const st = v.echo.stats; // the relay's round trips on this lease, for the record (and the tests)
+  box.dataset.echoStats = `${st.samples} ${st.p50Ms ?? ''} ${st.p95Ms ?? ''} ${st.maxMs ?? ''}`;
+  box.title = st.samples ? `Round trips this drive: ${st.samples}, median ${st.p50Ms} ms, 95th percentile ${st.p95Ms} ms, worst ${st.maxMs} ms` : '';
+  for (const b of $('drive-steps').querySelectorAll<HTMLButtonElement>('button')) b.setAttribute('aria-pressed', String(Number(b.dataset.step) === step));
+  const reply = lastDriveReply && clock.now() - lastDriveReply.at < 2_000 ? lastDriveReply.text : null;
+  const refusal = p.refusal ?? reply;
+  $('drive-refusal').hidden = refusal === null;
+  $('drive-refusal').textContent = refusal ?? '';
+  $('drive-warning').hidden = p.warning === null;
+  $('drive-warning').textContent = p.warning ?? '';
+  const dm = $('drive-deadman');
+  dm.dataset.level = p.deadman.level;
+  dm.textContent = p.deadman.words;
+  setMeter('meter-input', p.input, p.thresholdFraction);
+  setMeter('meter-echo', p.echo, p.thresholdFraction);
+  $('drive-speed').textContent = p.speed;
+  const side = (id: string, x: typeof p.ahead) => { $(id).textContent = x?.words ?? 'no zone boundary'; $(id).dataset.level = x?.level ?? 'ok'; };
+  side('drive-ahead', p.ahead);
+  side('drive-behind', p.behind);
+  $('drive-limit').hidden = p.limit === null;
+  $('drive-limit').textContent = p.limit ?? '';
+}
 
 // ---- audit (UI.md screen 4) ----
 
@@ -830,7 +1008,7 @@ function connect(): void {
 }
 
 // Between frames too: a service that has stopped sending must turn the clearance panel UNSURE.
-const watch = () => { renderLinks(); if (frame) renderClearance(frame.snapshot); clock.setTimeout(watch, 500); };
+const watch = () => { renderLinks(); if (frame) { renderClearance(frame.snapshot); renderDrive(); } clock.setTimeout(watch, 500); };
 
 setupSound();
 if (LIVE) {
@@ -840,6 +1018,7 @@ if (LIVE) {
   $('tray').hidden = false;
   setupLiveScreens();
   setupRowFreeze();
+  setupDriving();
   const m = /^#truck=([\w.-]{1,64})$/.exec(location.hash);
   if (m) openTruck = m[1]!;
   $('estop-trucks').hidden = false;

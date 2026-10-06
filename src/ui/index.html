@@ -81,6 +81,24 @@
     </div>
     <div id="detail-summary" class="detail-summary"></div>
     <div id="detail-callout"></div>
+    <section id="drive-panel" class="drive-panel" aria-label="Driving" hidden>
+      <div class="drive-head"><b id="drive-headline">Driving</b> <span id="drive-sending" class="drive-sending"></span></div>
+      <p class="drive-keys">Hold <kbd>↑</kbd> or <kbd>W</kbd> to drive forward, <kbd>↓</kbd> or <kbd>S</kbd> to reverse. Let go to stop.
+        Throttle: <kbd>1</kbd>–<kbd>4</kbd> or <span id="drive-steps" class="drive-steps" role="group" aria-label="Throttle"></span></p>
+      <div id="drive-refusal" class="drive-refusal" role="alert" hidden></div>
+      <div id="drive-warning" class="drive-warning" hidden></div>
+      <div id="drive-deadman" class="drive-deadman"></div>
+      <div class="meter" id="meter-input"><span class="label">Input age</span><div class="bar"><div class="fill"></div><div class="mark"></div></div><span class="val"></span></div>
+      <div class="meter" id="meter-echo"><span class="label">Echo age</span><div class="bar"><div class="fill"></div><div class="mark"></div></div><span class="val"></span></div>
+      <p class="meter-key">Bars run to 1 s; the line is the truck's 0.5 s deadman.</p>
+      <dl class="drive-facts">
+        <dt>Speed</dt><dd id="drive-speed"></dd>
+        <dt>Ahead</dt><dd id="drive-ahead"></dd>
+        <dt>Behind</dt><dd id="drive-behind"></dd>
+      </dl>
+      <div id="drive-limit" class="drive-limit" hidden></div>
+      <p class="drive-done">Done? Two steps: <b>1.</b> Release control (it stops and holds) · <b>2.</b> Resume (it carries on by itself).</p>
+    </section>
     <div id="detail-buttons" class="detail-buttons" role="group" aria-label="Commands"></div>
     <p id="detail-result" class="detail-result" aria-live="polite"></p>
     <h3>Commands <span class="hint">newest first · sent → acknowledged → effect seen</span></h3>
