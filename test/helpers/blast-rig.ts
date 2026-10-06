@@ -5,7 +5,8 @@ import { BlastEngine, type BlastEvent } from '../../src/blast.ts';
 import { ManualClock } from '../../src/clock.ts';
 import { FleetState } from '../../src/fleet.ts';
 import { attachRegistry, GatewayLink } from '../../src/link.ts';
-import { ALLOW_ALL_GATE_NO_BLAST_SAFETY, CommandRegistry, type RegistryEvent, type SafetyGate } from '../../src/registry.ts';
+import { BlastGate } from '../../src/gate.ts';
+import { CommandRegistry, type RegistryEvent, type SafetyGate } from '../../src/registry.ts';
 import { Store } from '../../src/store.ts';
 import { DLH1 } from '../../fake/dlh1.ts';
 import { FakeGateway, type FakeConfig } from '../../fake/gateway.ts';
@@ -33,7 +34,7 @@ export interface BlastRig {
 }
 
 export interface BlastRigOptions {
-  gate?: (fleet: FleetState, engine: () => BlastEngine) => SafetyGate; // default: allow all
+  gate?: (fleet: FleetState, engine: () => BlastEngine) => SafetyGate; // default: the blast engine's, as the service has it
   shared?: { clock: ManualClock; gw: FakeGateway; dialer: FakeDialer; dbPath: string; cleanupDir?: () => void };
   dbPath?: string; // ':memory:' for the L4 run
 }
@@ -51,7 +52,7 @@ export function blastRig(config: Partial<FakeConfig> = {}, o: BlastRigOptions = 
   let n = 0;
   // eslint-disable-next-line prefer-const
   let engine: BlastEngine;
-  const gate: SafetyGate = o.gate ? o.gate(fleet, () => engine) : ALLOW_ALL_GATE_NO_BLAST_SAFETY;
+  const gate: SafetyGate = o.gate ? o.gate(fleet, () => engine) : new BlastGate(fleet, () => engine);
   const registry = new CommandRegistry({ clock, fleet, store, transport: link, gate, newId: () => `b${clock.now() - T0}-${++n}` });
   attachRegistry(link, registry);
   const log: string[] = [];
