@@ -154,6 +154,10 @@ test('L7.1 / L7.2 / L7.6: hold to drive with the lag meter live; stopped short o
   const q = (xs: number[], p: number) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(p * xs.length))]!;
   const inputs = samples.map((s) => s.input), echoes = samples.map((s) => s.echo);
   console.log(`LAG against the fake (${samples.length} meter samples while moving): input age p50 ${q(inputs, 0.5)} ms, max ${Math.max(...inputs)} ms; echo age p50 ${q(echoes, 0.5)} ms, p95 ${q(echoes, 0.95)} ms, max ${Math.max(...echoes)} ms. Relay round trips: ${stats[0]} samples, p50 ${stats[1]} ms, p95 ${stats[2]} ms, max ${stats[3]} ms`);
+  // Checked against raw data: when the fake gateway received each drive line, against the sent_ms the
+  // service stamped on it (both on this machine's clock; the service's is learned from heartbeats).
+  const up = drives(NEAR).filter((r) => typeof r.m.sent_ms === 'number').map((r) => r.at - r.m.sent_ms);
+  console.log(`RAW uplink at the fake gateway, receipt minus sent_ms, ${up.length} drive lines: p50 ${q(up, 0.5)} ms, p95 ${q(up, 0.95)} ms, max ${Math.max(...up)} ms, min ${Math.min(...up)} ms`);
   assert.ok(q(inputs, 0.5) < 500, 'input arrives well inside the deadman');
   assert.ok(stats[0]! > 20 && stats[1]! > 0 && stats[1]! < 1_000, `round trips measured: ${stats.join(' ')}`);
 
