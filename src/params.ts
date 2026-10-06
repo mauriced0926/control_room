@@ -98,6 +98,14 @@ export const PARAMS = {
   loginMaxFailures: p(5, 'count', 'decided', 'failed logins for one user name, or from one address, before further attempts are refused for the window'),
   loginFailureWindow: p(15 * 60_000, 'ms', 'decided', 'the window the failure count covers'),
   browserMessagesPerSecond: p(10, 'count', 'decided', 'a person presses at most a few buttons a second; more is a stuck script or an attack, refused and logged'),
+
+  // Remote driving (task 7)
+  driveRelayMaxRate: p(20, 'count', 'spec', 'PROTOCOL.md §6.2, stream at 10 to 20 Hz: the relay forwards at most 20 inputs a second per lease (token bucket, burst driveRelayBurst)'),
+  driveRelayBurst: p(3, 'count', 'decided', 'a key pressed just after a 10 Hz tick goes at once instead of waiting for the next tick; three back to back at most'),
+  browserDriveMessagesPerSecond: p(40, 'count', 'decided', 'flood guard on one screen\'s drive input, above the relay\'s own 20 Hz so the relay\'s limit is the one that applies; a screen that sends more than this for a whole second is closed'),
+  driveStoppingTime: p(600, 'ms', 'decided', 'neither the spec nor the fake models braking (the fake stops at once). Bound: a stop lost on the radio is covered by the 500 ms deadman, plus one 100 ms input interval'),
+  driveBoundaryMargin: p(2, 'm', 'decided', 'kept short of a boundary into a closed zone, like EXIT_ZONE\'s stop about 2 m outside (PROTOCOL.md §5)'),
+  driveDefaultThrottle: p(0.5, 'ratio', 'decided', 'a novice starts at half throttle (2.0 m/s empty, under the autonomous 3.0) and steps up or down'),
 } as const satisfies Record<string, Param>;
 
 export type ParamName = keyof typeof PARAMS;

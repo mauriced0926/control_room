@@ -1,6 +1,6 @@
 // Task 6b scopes 3-5: the live hub between browsers and the registry, on a manual clock against the
 // in-process fake gateway. Browser sockets are fakes that record what they were sent.
-// Cases: L8.3, L8.2, L6.5, L6.3 (drive half: no drive path), L7.8 through the hub, frames and the
+// Cases: L8.3, L8.2, L6.5, L6.3 (a hub with no relay sends nothing; the relay is test/drive.test.ts), L7.8 through the hub, frames and the
 // service heartbeat (L9.3's server half), who's on, notices to the right people only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -168,7 +168,7 @@ test('L6.5 a flood is refused past the rate limit, and a browser that keeps floo
   } finally { h.done(); }
 });
 
-test('L6.3 (drive half) there is no drive path yet: a drive message is refused and nothing is sent to the gateway', () => {
+test('L6.3 a hub built without a drive relay refuses drive input, and nothing is sent to the gateway', () => {
   const h = hubRig();
   try {
     let drives = 0;
@@ -179,9 +179,9 @@ test('L6.3 (drive half) there is no drive path yet: a drive message is refused a
     h.r.advance(1_000);
     for (let i = 1; i <= 5; i++) {
       h.r.clock.advance(150);
-      const res = m.say({ type: 'drive', vehicleId: 'HT-07', lease_id: 'L-1', seq: i, throttle: 1.0 });
+      const res = m.say({ type: 'drive', vehicleId: 'HT-07', n: i, throttle: 1.0 });
       assert.equal(res.ok, false);
-      assert.match(res.error, /Driving from the browser is not available in this build yet\. Nothing was sent to the truck\./);
+      assert.match(res.error, /Driving is not available in this service\. Nothing was sent to the truck\./);
     }
     assert.equal(drives, 0, 'the link\'s drive path was never called');
     assert.ok(!h.r.dialer.sentLines.some((l) => /"type":"drive"/.test(l)), 'no drive line reached the gateway');
