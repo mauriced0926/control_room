@@ -3,7 +3,8 @@
 // the code under test.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clearanceRows, fleetRows, serviceLink, siteLink, TIERS } from '../src/ui/overview.ts';
+import { CallMemory, clearanceRows, fleetRows, restartMarker, serviceLink, siteLink, TIERS, type ClearanceRow } from '../src/ui/overview.ts';
+import { Replayer } from './helpers/rig.ts';
 import { age, countdown, elapsed } from '../src/words.ts';
 import { PARAMS } from '../src/params.ts';
 import type { FleetSnapshot } from '../src/fleet.ts';
@@ -156,4 +157,50 @@ test('old: the row says "old N s" between the old and silent thresholds', () => 
   const row = fleetRows(r.fleet.snapshot()).find((x) => x.vehicleId === r.fleet.site!.vehicles[0])!;
   assert.equal(row.data, 'old 3 s');
   assert.equal(row.dataKind, 'old');
+});
+
+test('link-drop-in-notice (UI.md, BLAST.md B13): while the site link is down, a closing zone is UNSURE whatever the data said, with the last call in grey beneath it and its age', () => {
+  const recs = fixture('link-drop-in-notice');
+  const memory = new CallMemory();
+  const seen: Array<{ down: boolean; row: ClearanceRow | undefined }> = [];
+  const r = new Replayer(recs, { hello: null });
+  for (let t = r.start; t <= r.end; t += 500) {
+    r.advanceTo(t);
+    const snap = r.fleet.snapshot();
+    const down = siteLink(snap).state === 'down';
+    seen.push({ down, row: clearanceRows(snap, { linkDown: down, memory }).find((x) => x.zoneId === 'DRAW_12') });
+  }
+  const before = seen.find((s) => !s.down && s.row);
+  assert.ok(before, 'a call made with the link up');
+  const during = seen.filter((s) => s.down && s.row);
+  assert.ok(during.length > 40, `${during.length} samples with the link down and DRAW_12 closing`);
+  for (const s of during) {
+    assert.equal(s.row!.verdictWords, 'UNSURE');
+    assert.equal(s.row!.linkDown, true);
+    assert.equal(s.row!.action, 'Radio the shot firer to hold the shot');
+    assert.match(s.row!.reasons[0]!, /^Site link down/);
+    assert.ok(s.row!.was, 'the last call is shown');
+  }
+  const ages = during.map((s) => s.row!.was!.agoMs);
+  assert.ok(ages.at(-1)! > ages[0]! + 30_000, `its age grows: ${ages[0]} to ${ages.at(-1)}`);
+  assert.equal(during[0]!.row!.was!.verdictWords, before.row!.verdictWords, 'the call from before the drop');
+  assert.equal(during[0]!.row!.was!.verdictWords, 'CLEAR', 'here the last call before the drop was CLEAR: exactly what must not stay on screen');
+});
+
+test('the call memory forgets a zone when it reopens, so an earlier blast\'s call is never shown as this one\'s', () => {
+  const m = new CallMemory();
+  m.call('Z', 'CLEAR', 1);
+  m.forgetOpen({ zones: [{ zoneId: 'Z', status: 'OPEN' }] } as unknown as FleetSnapshot);
+  assert.equal(m.call('Z', null, 2), null);
+});
+
+test('UI.md: a controller restart marks the data column for about a minute, then the marker goes', () => {
+  assert.equal(restartMarker(1_000, 13_500), 'controller restarted 12 s ago');
+  assert.equal(restartMarker(1_000, 1_000 + PARAMS.restartMarkerFor.value), null);
+  assert.equal(restartMarker(undefined, 5), null);
+  const { fleet } = replay(fixture('seq-reset'));
+  const snap = fleet.snapshot();
+  const rows = fleetRows(snap, new Map(), new Map([['HT-01', snap.atServerMs - 5_000]]));
+  assert.equal(rows.find((r) => r.vehicleId === 'HT-01')!.restarted, 'controller restarted 5 s ago');
+  assert.ok(rows.filter((r) => r.vehicleId !== 'HT-01').every((r) => r.restarted === null));
 });
