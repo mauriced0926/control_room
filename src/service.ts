@@ -10,8 +10,9 @@ import type { Clock, TimerHandle } from './clock.ts';
 import { FleetState } from './fleet.ts';
 import { startHttp, type AuthEvent } from './http.ts';
 import { attachRegistry, GatewayLink, type Dialer } from './link.ts';
-import { BLAST_SAFETY_OFF, LiveHub } from './live.ts';
-import { ALLOW_ALL_GATE_NO_BLAST_SAFETY, CommandRegistry } from './registry.ts';
+import { BlastGate } from './gate.ts';
+import { LiveHub } from './live.ts';
+import { CommandRegistry } from './registry.ts';
 import { END_WORDS, LoginThrottle, Sessions } from './sessions.ts';
 import { Store, type AuditEntry } from './store.ts';
 import type { UserBook } from './users.ts';
@@ -49,16 +50,14 @@ export async function startService(o: ServiceOptions): Promise<Service> {
   const fleet = new FleetState(clock);
   fleet.start();
   const link = new GatewayLink({ clock, fleet, dial: o.dial, email: o.email, ...(o.random ? { random: o.random } : {}) });
-  // The blast engine (task 5) replaces this gate. Until then nothing stops a command into a closing
-  // zone, and the service says so where people will see it.
-  const registry = new CommandRegistry({ clock, fleet, store, transport: link, gate: ALLOW_ALL_GATE_NO_BLAST_SAFETY });
+  // Every command, operators' and the system's, passes the blast engine's safety check (L2.53).
+  const registry = new CommandRegistry({ clock, fleet, store, transport: link, gate: new BlastGate(fleet, () => engine) });
   attachRegistry(link, registry);
   registry.start();
   // The blast engine (BLAST.md): after the registry, so on reconnect the registry has replayed its
   // commands before the engine decides on the hello snapshot.
   const engine = new BlastEngine({ clock, fleet, registry, store, link, log });
   engine.start();
-  log(`BLAST SAFETY NOT ACTIVE: the command registry runs with ALLOW_ALL_GATE_NO_BLAST_SAFETY. ${BLAST_SAFETY_OFF}`);
 
   link.subscribe((e) => {
     if (e.type === 'status') log(`site link ${e.status.state}: ${e.status.reason}`);
@@ -90,7 +89,7 @@ export async function startService(o: ServiceOptions): Promise<Service> {
     }
   };
 
-  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log, blast: engine, blastSafetyActive: false });
+  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log, blast: engine, blastSafetyActive: true });
   hub.start();
   const http = await startHttp({ ...o.http, users: o.users, sessions, throttle: new LoginThrottle(clock), hub, onAuth, log });
   link.start(); // the one gateway connection (L6.4): nothing a browser does opens another
