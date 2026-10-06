@@ -71,7 +71,7 @@ export interface HistoryRow {
   failure: unknown;
 }
 
-const OPEN_STATUSES = ['pending', 'sent', 'acknowledged'];
+const OPEN_STATUSES = ['pending', 'sent', 'acknowledged', 'unverified'];
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS commands (
