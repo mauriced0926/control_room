@@ -21,7 +21,7 @@ export interface HeldBy {
 }
 
 const HOLDS: Record<string, string> = {
-  HOLD: 'held it (HOLD)',
+  HOLD: 'sent Hold',
   RELEASE_CONTROL: 'handed it back after driving',
   TAKE_CONTROL: 'took control; the controls ended and it held',
   EXIT_ZONE: 'sent it out of a zone (EXIT_ZONE); it holds outside',
@@ -90,7 +90,7 @@ export function timelineEntry(r: CommandRecord, truck: TruckView | undefined): T
   }
   if (r.queued) steps.push({ atServerMs: toServer(r.queued.sinceMs), kind: 'progress', words: `Queued at the truck behind ${r.queued.behind}${r.queued.estimateMs !== null ? ` (~${Math.round(r.queued.estimateMs / 1000)} s left)` : ''}` });
   if (r.started) steps.push({ atServerMs: toServer(r.started.atMs), kind: 'progress', words: `Under way: ${r.started.detail}` });
-  if (r.effect) steps.push({ atServerMs: r.effect.serverMs, kind: 'effect', words: `Effect seen in telemetry: ${r.effect.detail}${r.effect.ackReceived ? '' : ' (no acknowledgement ever received)'}` });
+  if (r.effect) steps.push({ atServerMs: r.effect.serverMs, kind: 'effect', words: `Effect seen in telemetry: ${r.effect.detail}${r.effect.ackReceived ? '' : ' (no acknowledgement received)'}` });
   if (r.failure) steps.push({ atServerMs: r.closedServerMs, kind: 'end', words: r.failure.message });
   else if (r.status === 'superseded') steps.push({ atServerMs: r.closedServerMs, kind: 'end', words: 'Replaced by a newer command on this truck' });
   else if (r.status === 'cancelled') steps.push({ atServerMs: r.closedServerMs, kind: 'end', words: 'Cancelled before it was sent' });

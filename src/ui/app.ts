@@ -11,11 +11,17 @@
 // In live mode the browser sends commands (the e-stop for now) over the same WebSocket. It never
 // names the operator: the service takes that from the session. It never queues a command it could not
 // send: with the service disconnected it says so, and nothing is sent later.
+import { HOLD_THE_SHOT } from '../clearance.ts';
 import { SystemClock } from '../clock.ts';
+import { age, elapsed } from '../words.ts';
 import { PARAMS } from '../params.ts';
 import type { FleetSnapshot } from '../fleet.ts';
-import type { CommandView, LiveState, Notice } from '../live.ts';
-import { clearanceRows, fleetRows, serviceLink, siteLink, type LinkView } from './overview.ts';
+import type { AlarmItem } from '../attention.ts';
+import type { CommandView, LiveState, Notice, TruckDetail } from '../live.ts';
+import type { AuditLine } from './audit.ts';
+import { buttons, timelineEntry, truckFacts, type Button } from './detail.ts';
+import { CallMemory, clearanceRows, fleetRows, serviceLink, siteLink, type ClearanceRow, type LinkView } from './overview.ts';
+import { tonePattern, toSound, trayModel, type TrayEntry } from './tray.ts';
 import { trackModel, type SiteData, type TrackModel } from './track.ts';
 
 interface PlayerState {
@@ -39,6 +45,10 @@ let lastFrameAt: number | null = null;
 let socket: WebSocket | null = null; // live mode: open, or null
 let you: You | null = null;
 let notices: Notice[] = [];
+let detail: TruckDetail | null = null; // the open truck's timeline and notes, from the service
+let openTruck: string | null = null;    // the truck whose detail is open
+let lastClearance: { rows: ClearanceRow[]; at: number } | null = null; // the last panel the service sent
+const calls = new CallMemory();          // the fixture player's own last calls (live mode: the service's)
 
 // ---- small DOM helpers ----
 
@@ -89,14 +99,39 @@ function renderLinks(): void {
 
 // ---- zone clearance ----
 
+function serviceDown(): boolean {
+  const since = lastFrameAt === null ? null : clock.now() - lastFrameAt;
+  return serviceLink(since, SERVICE_STALE_MS, !LIVE || socket !== null).state === 'down';
+}
+
+// Live: the service's panel, which already says UNSURE while the site link is down. If the service
+// itself has gone, this screen can't say anything is clear either: every row turns UNSURE here, with
+// the service's last call beneath it and its age (UI.md; BLAST.md B13). The player keeps its own
+// last calls.
+function clearanceNow(snap: FleetSnapshot): ClearanceRow[] {
+  const live = frame?.live;
+  if (!live) return clearanceRows(snap, { linkDown: siteLink(snap, frame?.player?.heartbeatsRecorded ?? true).state === 'down', memory: calls });
+  if (!serviceDown()) {
+    lastClearance = { rows: live.clearance, at: clock.now() };
+    return live.clearance;
+  }
+  const since = lastClearance ? clock.now() - lastClearance.at : 0;
+  return (lastClearance?.rows ?? live.clearance).map((r) => ({
+    ...r, verdict: 'UNSURE', verdictWords: 'UNSURE', action: HOLD_THE_SHOT, linkDown: true,
+    reasons: ['Service disconnected: this screen is receiving nothing, so it cannot say whether a truck has gone in.', ...r.reasons.filter((x) => !x.startsWith('Site link down'))],
+    was: r.was ? { verdictWords: r.was.verdictWords, agoMs: r.was.agoMs + since } : { verdictWords: r.verdictWords, agoMs: since },
+  }));
+}
+
 function renderClearance(snap: FleetSnapshot): void {
-  const rows = clearanceRows(snap);
+  const rows = clearanceNow(snap);
   if (rows.length === 0) {
     $('clearance').replaceChildren(el('p', { class: 'none' }, 'No zone is closing or closed.'));
     return;
   }
   $('clearance').replaceChildren(...rows.map((r) => el('div', { class: 'zrow', 'data-zone': r.zoneId, 'data-verdict': r.verdict },
-    el('div', { class: `verdict ${r.verdict}` }, r.verdictWords),
+    el('div', {}, el('div', { class: `verdict ${r.verdict}` }, r.verdictWords),
+      r.was ? el('div', { class: 'was' }, `was ${r.was.verdictWords}, ${age(r.was.agoMs)} ago`) : null),
     el('div', {}, el('div', { class: 'zname' }, r.zoneId), el('div', { class: `zwhen ${r.status === 'CLOSED' ? 'closed' : ''}` }, r.when)),
     el('div', {},
       r.action ? el('div', { class: 'action' }, `${r.action}.`) : el('div', { class: 'action' }, 'No truck might be inside.'),
@@ -206,14 +241,21 @@ function lastCommands(live: LiveState | undefined): Map<string, string> {
 }
 
 function renderRows(snap: FleetSnapshot): void {
-  $('rows').replaceChildren(...fleetRows(snap, lastCommands(frame?.live)).map((r) => el('tr', { class: r.dataKind, 'data-truck': r.vehicleId, 'data-kind': r.dataKind },
+  const live = frame?.live;
+  const restarts = new Map(Object.entries(live?.restarts ?? {}));
+  const heldWords = (id: string): string | null => {
+    const h = live?.held[id];
+    if (!h) return null;
+    return h.by ? `held by ${h.by === you?.id ? 'you: Resume in its detail' : h.by}` : 'held (by whom not known)';
+  };
+  $('rows').replaceChildren(...fleetRows(snap, lastCommands(live), restarts).map((r) => el('tr', { class: `${r.dataKind}${r.vehicleId === openTruck ? ' open' : ''}`, 'data-truck': r.vehicleId, 'data-kind': r.dataKind, tabindex: '0', title: `Open ${r.vehicleId}` },
     el('td', { class: 'id' }, r.vehicleId),
-    el('td', { class: 'data' }, r.data),
+    el('td', { class: 'data' }, r.data, r.restarted ? el('span', { class: 'restart', title: 'Controller restarted: its data is being used again; no action needed' }, `↻ ${r.restarted}`) : null),
     el('td', { class: 'why' }, r.attention ?? ''),
     el('td', {}, r.state, r.fault ? el('span', { class: 'fault' }, r.fault) : null),
     el('td', {}, r.zone, r.zoneAlert ? el('br') : null, r.zoneAlert ? el('span', { class: 'zalert' }, r.zoneAlert) : null),
     el('td', {}, r.soc, ...r.socFlags.map((f) => el('span', { class: 'flag' }, f))),
-    el('td', {}, r.control),
+    el('td', {}, r.control, heldWords(r.vehicleId) ? el('span', { class: 'held' }, heldWords(r.vehicleId)!) : null),
     el('td', { class: 'cmd' }, r.lastCommand),
   )));
 }
@@ -270,13 +312,58 @@ async function setupPlayer(): Promise<void> {
 
 // ---- sound ----
 
+// Browsers block sound until the page is clicked, so "Sound off" shows until the operator arms it
+// (UI.md). Interrupts only, a short tone pattern each, never continuous.
+let audio: AudioContext | null = null;
+const heard = new Map<string, number>(); // alertSeq heard per alarm key on this screen
+let missed = 0;                          // interrupts that alerted while sound was off
+
 function setupSound(): void {
   const b = $('sound');
   b.addEventListener('click', () => {
     const Ctx = (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext;
-    if (!Ctx) return;
-    void new Ctx().resume().then(() => { b.dataset.armed = 'true'; b.textContent = 'Sound armed'; });
+    if (!Ctx) { b.textContent = 'Sound unavailable in this browser'; return; }
+    const ctx = audio ?? new Ctx();
+    void ctx.resume().then(() => {
+      audio = ctx;
+      missed = 0;
+      b.dataset.armed = 'true';
+      b.dataset.missed = 'false';
+      b.textContent = 'Sound armed';
+      play([{ hz: 660, ms: 80 }]); // a quiet click of confirmation
+    });
   });
+}
+
+function play(pattern: Array<{ hz: number; ms: number }>): void {
+  if (!audio || audio.state !== 'running') return;
+  let t = audio.currentTime + 0.02;
+  for (const n of pattern) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.frequency.value = n.hz;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + n.ms / 1000);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + n.ms / 1000 + 0.02);
+    t += n.ms / 1000 + 0.06;
+  }
+}
+
+// One pattern per frame at most, the most urgent first: several alarms at once are still one short
+// sound, never a run of them.
+function soundFor(items: AlarmItem[]): void {
+  const due = toSound(items, you?.id ?? null, heard);
+  if (due.length === 0) return;
+  document.body.dataset.alerted = String(Number(document.body.dataset.alerted ?? '0') + due.length); // for tests
+  const first = due.find((i) => i.source === 'blast') ?? due.find((i) => i.source === 'link') ?? due[0]!;
+  if (audio && audio.state === 'running') { play(tonePattern(first)); return; }
+  missed += due.length;
+  const b = $('sound');
+  b.dataset.missed = 'true';
+  b.textContent = `Sound off: ${missed} alarm${missed > 1 ? 's' : ''} not heard. Click to arm`;
 }
 
 // ---- live mode ----
@@ -292,7 +379,9 @@ function connectLive(): void {
       frame = body.frame;
       you = m.you as You;
       notices = (m.notices as Notice[]) ?? [];
+      detail = (m.detail as TruckDetail | null) ?? null;
       lastFrameAt = clock.now();
+      if (openTruck && $('detail').hidden) openDetail(openTruck); // opened from the address (#truck=...)
       render();
     } else if (m.type === 'result') {
       onResult(m as unknown as Result);
@@ -315,11 +404,15 @@ async function reconnect(): Promise<void> {
   connectLive();
 }
 
-interface Result { type: 'result'; ref: string | null; ok: boolean; error?: string; command?: CommandView }
+interface Result { type: 'result'; ref: string | null; ok: boolean; error?: string; command?: CommandView; history?: { lines: AuditLine[]; truncated: boolean; atServerMs: number } }
 const asked = new Map<string, string>(); // ref -> truck, for e-stops sent and not yet answered
 let refN = 0;
 
+const handlers = new Map<string, (m: Result) => void>(); // ref -> what to do with its result
+
 function onResult(m: Result): void {
+  const h = m.ref ? handlers.get(m.ref) : undefined;
+  if (h) { handlers.delete(m.ref!); h(m); return; }
   const truck = m.ref ? asked.get(m.ref) : undefined;
   if (m.ref) asked.delete(m.ref);
   if (!m.ok && truck) estopNote(`E-stop ${truck} NOT sent: ${m.error ?? m.command?.summary ?? 'refused'}`, true);
@@ -427,15 +520,224 @@ function renderLive(live: LiveState, snap: FleetSnapshot): void {
     .map((l) => el('span', { class: 'person away', 'data-user': l.operatorId }, `${l.operatorId} · no screen open here · has control of ${l.vehicleId}`));
   $('who').replaceChildren(el('b', {}, 'On: '), ...who, ...away);
 
-  const items = [
-    ...notices.map((n) => ({ at: n.atServerMs, cls: 'notice', text: n.message })),
-    ...live.alarms.map((a) => ({ at: a.atServerMs, cls: 'alarm', text: a.message })),
-  ].sort((a, b) => b.at - a.at).slice(0, 12);
-  const now = snap.atServerMs;
-  $('alarm-list').replaceChildren(...(items.length
-    ? items.map((i) => el('div', { class: `item ${i.cls}` }, el('span', { class: 'ago' }, `${clock2(Math.max(0, now - i.at))} ago`), i.text))
-    : [el('p', { class: 'none' }, 'Nothing needs you.')]));
+  renderTray(live, snap);
+  renderDetail();
   renderEstops();
+}
+
+// ---- the attention tray ----
+
+function renderTray(live: LiveState, snap: FleetSnapshot): void {
+  const tray = trayModel(live.attention, you?.id ?? null, snap.atServerMs);
+  soundFor(live.attention);
+  $('tray-count').textContent = tray.needAck ? `${tray.needAck} to acknowledge` : 'nothing to acknowledge';
+  $('tray').dataset.needAck = String(tray.needAck);
+  $('tray-interrupts').replaceChildren(...(tray.interrupts.length ? tray.interrupts.map(trayItem) : [el('p', { class: 'none' }, 'Nothing needs you now.')]));
+  const now = snap.atServerMs;
+  $('tray-notices').replaceChildren(...notices.slice(0, 5).map((n) => el('div', { class: 'item notice' },
+    el('span', { class: 'ago' }, `${elapsed(Math.max(0, now - n.atServerMs))} ago`), `For you: ${n.message}`)));
+  $('tray-silent-count').textContent = `${tray.silent.length} shown, no sound`;
+  $('tray-silent').replaceChildren(...tray.silent.map(trayItem));
+}
+
+function trayItem(e: TrayEntry): HTMLElement {
+  const box = el('div', { class: `item ${e.interrupt ? 'interrupt' : 'silent'}`, 'data-key': e.key, 'data-state': e.state, ...(e.vehicleId ? { 'data-truck': e.vehicleId } : {}) },
+    el('div', { class: 'msg' }, e.message),
+    e.action ? el('div', { class: 'act' }, `${e.action}.`) : null,
+    el('div', { class: 'meta' }, el('span', { class: 'ago' }, e.when), e.status ? ` · ${e.status}` : ''),
+    el('div', { class: 'rule' }, `Rule: ${e.rule}`));
+  const tools = el('div', { class: 'tools' });
+  if (e.interrupt && e.state !== 'acknowledged') {
+    const b = el('button', { type: 'button', class: 'ack' }, you ? `Acknowledge as ${you.name}` : 'Acknowledge');
+    b.addEventListener('click', () => ask({ type: 'ack', key: e.key }, (m) => { if (!m.ok) b.textContent = m.error ?? 'Not acknowledged'; }));
+    tools.append(b);
+  }
+  if (e.vehicleId) {
+    const o = el('button', { type: 'button', class: 'open' }, `Open ${e.vehicleId}`);
+    o.addEventListener('click', () => openDetail(e.vehicleId!));
+    tools.append(o);
+  }
+  if (tools.childElementCount) box.append(tools);
+  return box;
+}
+
+// Sends a request and runs `then` with its answer. False when the service is not connected.
+function ask(msg: Record<string, unknown>, then: (m: Result) => void): boolean {
+  const ref = send(msg);
+  if (ref === null) { then({ type: 'result', ref: null, ok: false, error: 'NOT sent: the service is disconnected.' }); return false; }
+  handlers.set(ref, then);
+  return true;
+}
+
+// ---- truck detail (UI.md screen 2) ----
+
+function openDetail(id: string): void {
+  if (!LIVE) return;
+  openTruck = id;
+  detail = null;
+  $('detail-result').textContent = '';
+  $('detail').hidden = false;
+  document.body.classList.add('drawer-open');
+  if (location.hash !== `#truck=${id}`) history.replaceState(null, '', `#truck=${id}`);
+  ask({ type: 'watch', vehicleId: id }, () => undefined);
+  renderDetail();
+  if (frame) renderRows(frame.snapshot);
+}
+
+function closeDetail(): void {
+  openTruck = null;
+  detail = null;
+  $('detail').hidden = true;
+  document.body.classList.remove('drawer-open');
+  if (location.hash.startsWith('#truck=')) history.replaceState(null, '', location.pathname);
+  send({ type: 'watch', vehicleId: null });
+  if (frame) renderRows(frame.snapshot);
+}
+
+const buttonEls = new Map<string, HTMLButtonElement>(); // kept between frames so a press is never lost to a redraw
+
+function renderDetail(): void {
+  const id = openTruck;
+  const live = frame?.live;
+  if (!id || !live || !frame) return;
+  const snap = frame.snapshot;
+  const t = snap.trucks.find((x) => x.vehicleId === id);
+  $('detail-title').textContent = id;
+  if (!t) { $('detail-summary').textContent = 'Not on this site.'; return; }
+  const held = live.held[id] ?? null;
+  const me = you?.id ?? null;
+  const row = fleetRows({ ...snap, trucks: [t] }, new Map(), new Map(Object.entries(live.restarts)))[0]!;
+  $('detail-summary').replaceChildren(
+    el('span', { class: `chipword ${t.confidence}` }, row.data), ' ',
+    el('b', {}, row.state), ` · ${row.zone} · ${row.soc}`,
+    ...(row.attention ? [el('div', { class: 'why' }, row.attention)] : []));
+
+  // L7.9: after a hand-back the next step is obvious: held by you, Resume.
+  const callout = $('detail-callout');
+  const c = t.control?.value;
+  if (held && held.by && held.by === me) callout.replaceChildren(el('div', { class: 'callout held' }, `Held by you: you ${held.how}. It will not move until someone resumes it.`, resumeButton(id)));
+  else if (c?.mode === 'MANUAL' && c.operatorId === me) callout.replaceChildren(el('div', { class: 'callout mine' }, 'You have control. Driving from the browser is not in this build. Release control to hand it back: it will then hold, and Resume sends it on.'));
+  else if (c?.mode === 'MANUAL' && c.operatorId) callout.replaceChildren(el('div', { class: 'callout other' }, `${c.operatorId} is driving ${id}. Commands from anyone else are refused until they hand it back.`));
+  else if (held) callout.replaceChildren(el('div', { class: 'callout' }, `Holding: ${held.by ? `${held.by} ${held.how}` : held.how}.`));
+  else callout.replaceChildren();
+
+  const bs = buttons(t, you, held);
+  const wanted = bs.map((b) => {
+    const key = `${id}:${b.action}:${b.force ? 'f' : ''}`;
+    let e = buttonEls.get(key);
+    if (!e) {
+      e = el('button', { type: 'button', 'data-action': b.action, ...(b.force ? { 'data-force': 'true' } : {}) });
+      const btn = b;
+      e.addEventListener('click', () => command(id, btn));
+      buttonEls.set(key, e);
+    }
+    e.textContent = b.label;
+    e.className = `cmd${b.primary ? ' primary' : ''}`;
+    e.disabled = b.disabled !== undefined;
+    e.title = b.disabled ?? b.note ?? '';
+    return e;
+  });
+  const box = $('detail-buttons');
+  const notes = bs.filter((b) => b.disabled).map((b) => el('p', { class: 'disabled-why' }, `${b.label}: ${b.disabled}`));
+  if (wanted.length !== box.querySelectorAll('button').length || wanted.some((w, i) => box.querySelectorAll('button')[i] !== w)) box.replaceChildren(...wanted, ...notes);
+  else { box.querySelectorAll('p').forEach((p) => p.remove()); box.append(...notes); }
+
+  const d = detail && detail.vehicleId === id ? detail : null;
+  $('detail-timeline').replaceChildren(...(d === null ? [el('li', { class: 'none' }, 'Loading…')]
+    : d.commands.length === 0 ? [el('li', { class: 'none' }, 'No commands to this truck since the service started.')]
+      : d.commands.map((r) => {
+        const e = timelineEntry(r, t);
+        return el('li', { class: `cmdrow ${e.outcome.replace(/[^a-z]+/g, '-')}`, 'data-id': e.id, 'data-outcome': e.outcome },
+          el('div', { class: 'head' }, e.headline),
+          e.detail && e.outcome !== 'done' ? el('div', { class: 'detail' }, e.detail) : null,
+          el('ol', { class: 'steps' }, ...e.steps.filter((st) => st.kind !== 'end' || e.outcome === 'done').map((st) => el('li', { class: st.kind }, el('span', { class: 'at' }, st.atServerMs === null ? '—' : timeOf(st.atServerMs)), st.words))));
+      })));
+  $('detail-facts').replaceChildren(...truckFacts(t, snap, d?.note, held, me).flatMap((f) => [el('dt', {}, f.label), el('dd', f.flag ? { class: 'flag' } : {}, f.value)]));
+}
+
+function resumeButton(id: string): HTMLButtonElement {
+  const b = el('button', { type: 'button', class: 'cmd primary resume-now' }, 'Resume');
+  b.addEventListener('click', () => command(id, { action: 'RESUME', label: 'Resume' }));
+  return b;
+}
+
+// A command names an action and a truck; who sent it comes from the session (L8.3).
+function command(id: string, b: Pick<Button, 'action' | 'label' | 'force'>): void {
+  const out = $('detail-result');
+  out.className = 'detail-result';
+  out.textContent = `${b.label}: sending…`;
+  ask({ type: 'command', action: b.action, vehicleId: id, ...(b.force ? { force: true } : {}) }, (m) => {
+    out.className = `detail-result ${m.ok ? 'ok' : 'bad'}`;
+    out.textContent = m.ok ? `${b.label} sent as ${you?.id ?? 'you'}. What happens to it is in the timeline below.`
+      : `${b.label} NOT done: ${m.command?.summary ?? m.error ?? 'refused'}`;
+  });
+}
+
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+const dateFmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }); // yyyy-mm-dd
+function timeOf(ms: number): string { return timeFmt.format(ms); }
+
+// ---- audit (UI.md screen 4) ----
+
+function openAudit(): void {
+  $('audit').hidden = false;
+  const snap = frame?.snapshot;
+  const sel = $<HTMLSelectElement>('audit-truck');
+  if (snap && sel.options.length === 0) sel.replaceChildren(...snap.trucks.filter((t) => t.onRoster !== false).map((t) => el('option', { value: t.vehicleId }, t.vehicleId)));
+  if (openTruck) sel.value = openTruck;
+  const now = snap?.atServerMs ?? clock.now();
+  const d = $<HTMLInputElement>('audit-date'), tm = $<HTMLInputElement>('audit-time');
+  if (!d.value) d.value = dateFmt.format(now);
+  if (!tm.value) tm.value = timeFmt.format(now);
+}
+
+function runAudit(): void {
+  const v = $<HTMLSelectElement>('audit-truck').value;
+  const at = Date.parse(`${$<HTMLInputElement>('audit-date').value}T${$<HTMLInputElement>('audit-time').value}`); // local time
+  const w = Number($<HTMLSelectElement>('audit-window').value);
+  const out = $('audit-result');
+  if (!Number.isFinite(at)) { out.replaceChildren(el('p', { class: 'bad' }, 'Pick a date and a time.')); return; }
+  out.replaceChildren(el('p', { class: 'none' }, 'Looking…'));
+  ask({ type: 'history', vehicleId: v, atServerMs: at, windowMs: w }, (m) => {
+    if (!m.ok || !m.history) { out.replaceChildren(el('p', { class: 'bad' }, m.error ?? 'No answer.')); return; }
+    const lines = m.history.lines;
+    out.replaceChildren(
+      el('p', { class: 'answer' }, lines.length ? `${lines.length} command${lines.length > 1 ? 's' : ''} on ${v} open between ${timeOf(at - w)} and ${timeOf(at + w)}.` : `No command to ${v} was open between ${timeOf(at - w)} and ${timeOf(at + w)}.`),
+      ...(lines.length ? [el('table', { class: 'audit-table' },
+        el('thead', {}, el('tr', {}, ...['Time', 'Command', 'Who', 'Why', 'Sent', 'Site said', 'What happened'].map((h) => el('th', {}, h)))),
+        el('tbody', {}, ...lines.map((l) => el('tr', { class: `${l.closest ? 'closest' : ''}${l.system ? ' system' : ''}`, 'data-id': l.recordId },
+          el('td', { class: 'at' }, timeOf(l.atServerMs)), el('td', {}, el('b', {}, l.action)), el('td', {}, l.who),
+          el('td', {}, l.why ?? '—', l.inputs ? el('div', { class: 'inputs' }, `saw: ${l.inputs}`) : null),
+          el('td', { class: 'small' }, l.sent), el('td', { class: 'small' }, l.acks), el('td', {}, l.outcome))))),
+      ] : []),
+      ...(m.history.truncated ? [el('p', { class: 'hint' }, 'Only the last 200 shown: narrow the window.')] : []));
+  });
+}
+
+function setupLiveScreens(): void {
+  $('detail-close').addEventListener('click', closeDetail);
+  $('audit-open').addEventListener('click', openAudit);
+  $('audit-close').addEventListener('click', () => { $('audit').hidden = true; });
+  $('audit-form').addEventListener('submit', (e) => { e.preventDefault(); runAudit(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('audit').hidden) $('audit').hidden = true;
+    else if (openTruck) closeDetail();
+  });
+  // Click or Enter on a fleet row, or a click on a truck on the track, opens its detail.
+  const fromEvent = (e: Event): string | null => {
+    const target = e.target as Element;
+    if (target.closest('button, a, input, select')) return null;
+    const hit = target.closest('[data-truck]') as HTMLElement | SVGElement | null;
+    return hit?.dataset.truck ?? null;
+  };
+  $('rows').addEventListener('click', (e) => { const id = fromEvent(e); if (id) openDetail(id); });
+  $('rows').addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') { const id = fromEvent(e); if (id) openDetail(id); } });
+  $('track').addEventListener('click', (e) => {
+    const g = (e.target as Element).closest('g.chip, g.range') as SVGGElement | null;
+    const id = g?.dataset.truck ?? g?.dataset.trucks?.split(' ')[0];
+    if (id) openDetail(id);
+  });
 }
 
 // ---- main ----
@@ -461,14 +763,18 @@ function connect(): void {
   };
 }
 
-const watch = () => { renderLinks(); clock.setTimeout(watch, 500); };
+// Between frames too: a service that has stopped sending must turn the clearance panel UNSURE.
+const watch = () => { renderLinks(); if (frame) renderClearance(frame.snapshot); clock.setTimeout(watch, 500); };
 
 setupSound();
 if (LIVE) {
   $('player').hidden = true;
   $('mode').textContent = 'LIVE';
   $('live-bar').hidden = false;
-  $('alarms').hidden = false;
+  $('tray').hidden = false;
+  setupLiveScreens();
+  const m = /^#truck=([\w.-]{1,64})$/.exec(location.hash);
+  if (m) openTruck = m[1]!;
   $('estop-trucks').hidden = false;
   $('estop').title = 'E-stop: one press stops that truck. Shown as done only when the truck reports ESTOPPED.';
   $('estop').classList.add('armed');
