@@ -1,0 +1,66 @@
+# Tests and the Docker image on amd64 (TESTING.md L13.1-L13.3). The deploy box is arm64; graders will
+# most likely run this on an amd64 laptop. Uses the fake gateway only: no secrets, never the real site.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: slow tests (probe conformance over TLS, end-to-end service)
+        run: npm run test:slow
+      - name: browser tests (the runner's Google Chrome, through playwright-core)
+        run: npm run test:browser
+
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+      - run: npm ci
+      - name: build the image (amd64)
+        run: docker build -t dlh-control-room .
+      - name: L13.3 node:sqlite starts without an ExperimentalWarning on this exact image
+        run: |
+          out=$(docker run --rm --entrypoint node dlh-control-room -e 'const {DatabaseSync}=require("node:sqlite"); new DatabaseSync(":memory:"); console.log(process.version, process.arch)' 2>&1)
+          echo "$out"
+          if echo "$out" | grep -qi warning; then echo "::error::warning at start-up"; exit 1; fi
+      - name: smoke test against the fake gateway (only the three GATEWAY_* variables, no Anthropic key)
+        run: |
+          d=$(mktemp -d)
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=127.0.0.1 \
+            -addext subjectAltName=IP:127.0.0.1 -keyout "$d/key.pem" -out "$d/cert.pem" 2>/dev/null
+          chmod 644 "$d/cert.pem"
+          node fake/main.ts --key "$d/key.pem" --cert "$d/cert.pem" --port 7443 --day live > "$d/fake.log" 2>&1 &
+          sleep 2
+          docker run -d --name cr --network host \
+            -e GATEWAY_HOST=127.0.0.1 -e GATEWAY_PORT=7443 -e GATEWAY_EMAIL=ci@example.com \
+            -e NODE_EXTRA_CA_CERTS=/certs/cert.pem -v "$d/cert.pem:/certs/cert.pem:ro" \
+            dlh-control-room
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/ || true)
+            [ "$code" = "303" ] && break
+            sleep 1
+          done
+          docker logs cr
+          [ "$code" = "303" ] || { echo "::error::service did not answer with a redirect to login (got $code)"; exit 1; }
+          docker logs cr 2>&1 | grep -q "site link up" || { echo "::error::service never connected to the fake gateway"; exit 1; }
+          echo "unauthenticated live connection: $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/live)"
