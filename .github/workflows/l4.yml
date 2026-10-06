@@ -1,0 +1,42 @@
+# TESTING.md L4: blast safety over seeded random days, against the fake gateway's truth. One job per
+# version (L0.P) and set; each runs 200 seeds. Results are uploaded whether or not a rule fails: a
+# failure is the thing we need to see. Never touches the real gateway.
+name: l4
+
+on:
+  push:
+    branches: ['l4-run/**']
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: seeds per job
+        default: '200'
+
+jobs:
+  l4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [spec, pessimistic]
+        set: [live, variants, r2c]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.15.0
+          cache: npm
+      - run: npm ci
+      - name: L4 ${{ matrix.version }} / ${{ matrix.set }}
+        run: |
+          node tools/l4.ts --seeds ${{ inputs.seeds || '200' }} --versions ${{ matrix.version }} --sets ${{ matrix.set }} \
+            --workers 4 --out l4-${{ matrix.version }}-${{ matrix.set }}.json \
+            > l4-${{ matrix.version }}-${{ matrix.set }}.txt 2> l4-${{ matrix.version }}-${{ matrix.set }}.err \
+            && echo "result=pass" >> "$GITHUB_OUTPUT" || echo "result=fail" >> "$GITHUB_OUTPUT"
+          cat l4-${{ matrix.version }}-${{ matrix.set }}.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: l4-${{ matrix.version }}-${{ matrix.set }}
+          path: l4-${{ matrix.version }}-${{ matrix.set }}.*
