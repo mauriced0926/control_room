@@ -167,7 +167,7 @@ test('L8.1 a command blocked by a lease is shown to the lease holder as well as 
   await openRow(marta, truck);
   await marta.waitForSelector('#detail:not([hidden])');
   await marta.click('#detail-buttons button[data-action="TAKE_CONTROL"]');
-  await marta.waitForFunction(() => /You have control/.test(document.getElementById('detail-callout')!.textContent!), null, { timeout: 10_000 });
+  await marta.waitForFunction(() => /^You are driving /.test(document.getElementById('drive-headline')!.textContent!) && !document.getElementById('drive-panel')!.hidden, null, { timeout: 10_000 });
 
   await openRow(page, truck);
   await page.waitForFunction(() => /marta is driving/.test(document.getElementById('detail-callout')!.textContent!), null, { timeout: 5_000 });

@@ -140,11 +140,13 @@ test('L7.1 / L7.2 / L7.6: hold to drive with the lag meter live; stopped short o
   assert.ok(refused, 'the refusal showed on screen');
   assert.ok(truth(NEAR).positionM > start + 20, `it drove: ${start} -> ${truth(NEAR).positionM}`);
   assert.match(await panelText(priya, 'drive-refusal'), /^Stopped: L4_NORTH is CLOSED, \d+ m ahead\. Driving forward into it is refused; you can drive the other way\.$/);
+  assert.match(await panelText(priya, 'drive-sending'), /^asking forward 100 %: sent as a stop$/);
   await sleep(1_500); // key still held
   const stopAt = truth(NEAR).positionM;
   assert.ok(stopAt < CLOSED_AT_M, `never into the closed zone: at ${stopAt}`);
   assert.equal(truth(NEAR).speedMps, 0);
   await shot(priya, 'drive-refused-closed-zone.png');
+  if (SHOTS) await priya.screenshot({ path: join(SHOTS, 'drive-full-page.png') });
   await priya.keyboard.up('ArrowUp');
 
   // L7.2: what the meter showed while it moved, and the relay's own round trips on this lease.

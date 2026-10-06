@@ -361,7 +361,7 @@ kbd { font-family: var(--mono); background: var(--panel); border: 1px solid var(
 .meter .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text); left: 50%; }
 .meter .val { grid-column: 2; font-size: 13px; color: var(--muted); }
 .meter-key { font-size: 12px; color: var(--dim); margin: 0 0 6px; }
-.drive-facts { display: grid; grid-template-columns: 70px 1fr; gap: 3px 10px; margin: 8px 0; font-size: 16px; }
+.drive-facts { display: grid; grid-template-columns: 90px 1fr; gap: 3px 10px; margin: 8px 0; font-size: 16px; }
 .drive-facts dt { color: var(--muted); }
 .drive-facts dd { margin: 0; }
 .drive-facts dd[data-level="warn"] { color: #ffe2a0; font-weight: 700; }

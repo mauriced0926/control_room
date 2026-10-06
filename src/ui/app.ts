@@ -894,8 +894,9 @@ function renderDrive(): void {
   const throttle = throttleFor(held, step);
   $('drive-headline').textContent = p.headline;
   const sending = $('drive-sending');
-  sending.dataset.on = String(driveTimer !== null);
-  sending.textContent = driveTimer === null ? 'NOT sending' : held ? `sending ${held === 'FWD' ? 'forward' : 'reverse'} ${Math.round(Math.abs(throttle) * 100)} %` : 'sending stop (0) at 10 Hz';
+  const asked = held ? `${held === 'FWD' ? 'forward' : 'reverse'} ${Math.round(Math.abs(throttle) * 100)} %` : '';
+  sending.textContent = driveTimer === null ? 'NOT sending' : !held ? 'sending stop (0) at 10 Hz' : v.refusal?.current ? `asking ${asked}: sent as a stop` : `sending ${asked}`;
+  sending.dataset.on = String(driveTimer !== null && !(held && v.refusal?.current));
   box.dataset.streaming = String(driveTimer !== null);
   box.dataset.held = held ?? '';
   const st = v.echo.stats; // the relay's round trips on this lease, for the record (and the tests)
