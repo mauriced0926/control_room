@@ -1,14 +1,15 @@
-// Is this zone clear? From belief only (CLAUDE.md invariant 6: never wrongly clear).
-//
-// PROVISIONAL: the blast engine (PLAN.md task 5) will own this verdict, adding "can't get out in
-// time", hold-before-entry and command outcomes. Until then the UI uses this, which implements only
-// invariant 6:
+// Is this zone clear? BLAST.md B11 and B13, from belief only (CLAUDE.md invariant 6: never wrongly
+// clear). The blast engine owns this verdict (src/blast.ts calls it, and keeps the last call made
+// while the link was up); it is pure so the UI and the tests use the same rule. Every truck is judged
+// by its reachable range, live and old ones included:
 //   NOT_CLEAR  a live or old truck reports a position inside the zone;
-//   UNSURE     otherwise, any truck whose reachable range touches the zone: silent, contradicted or
-//              never heard from, or a live truck at the boundary that might already be in;
-//   CLEAR      no truck might be inside.
+//   UNSURE     otherwise, any truck whose reachable range touches the zone (silent, contradicted or
+//              never heard from, or a live or old truck at the boundary that might already be in), or
+//              the site link is down or not up yet (B13);
+//   CLEAR      every truck's range is outside the zone, and the link is up.
 // NOT_CLEAR and UNSURE carry the same action, because in doubt the shot is held (CONTEXT.md answer 1).
-// CLEAR here says nothing about trucks that may still drive in before the zone closes.
+// CLEAR says nothing about trucks that may still drive in before the zone closes: the engine holds
+// those (B6).
 import type { TruckView, ZoneView } from './fleet.ts';
 import { age, faultWords, positionAgeMs } from './words.ts';
 
@@ -33,7 +34,9 @@ export function mightBeIn(t: TruckView, zoneId: string): boolean {
   return t.range === null || t.mightBeIn.includes(zoneId);
 }
 
-export function zoneClearance(zone: ZoneView, trucks: readonly TruckView[]): Clearance {
+// `link`: whether the site link is up. Left out, the link is not judged (the fixture player, which
+// has no link of its own, and a snapshot taken before any link was reported).
+export function zoneClearance(zone: ZoneView, trucks: readonly TruckView[], link?: { linkUp: boolean }): Clearance {
   const inside: ClearanceReason[] = [];
   const might: ClearanceReason[] = [];
   const neverHeard: string[] = [];
@@ -63,7 +66,10 @@ export function zoneClearance(zone: ZoneView, trucks: readonly TruckView[]): Cle
     }
   }
   if (neverHeard.length) might.push({ vehicleIds: neverHeard, certainty: 'might', why: 'never reported: could be anywhere' });
-  const verdict: Verdict = inside.length ? 'NOT_CLEAR' : might.length ? 'UNSURE' : 'CLEAR';
+  if (link && !link.linkUp) might.unshift({ vehicleIds: [], certainty: 'might', why: 'site link down: nothing is seen now, and no truck can be sent a command' });
+  // B13: with the link down every zone that is not open is UNSURE, whatever was last seen.
+  const linkDown = !!link && !link.linkUp;
+  const verdict: Verdict = linkDown ? 'UNSURE' : inside.length ? 'NOT_CLEAR' : might.length ? 'UNSURE' : 'CLEAR';
   return { zoneId: zone.zoneId, verdict, action: verdict === 'CLEAR' ? null : HOLD_THE_SHOT, reasons: [...inside, ...might] };
 }
 

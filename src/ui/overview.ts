@@ -34,7 +34,8 @@ export function zoneWhen(z: ZoneView): string {
 // while verdicts change, so the operator finds a zone by its name and place.
 export function clearanceRows(snap: FleetSnapshot): ClearanceRow[] {
   return snap.zones.filter((z) => z.status !== 'OPEN').map((z) => {
-    const c = zoneClearance(z, snap.trucks);
+    // B13: the site link is judged when there is one (the fixture player has none).
+    const c = zoneClearance(z, snap.trucks, snap.link.up === null ? undefined : { linkUp: snap.link.up });
     return {
       zoneId: z.zoneId,
       status: z.status ?? 'status unknown',
@@ -42,7 +43,7 @@ export function clearanceRows(snap: FleetSnapshot): ClearanceRow[] {
       verdictWords: VERDICT_WORDS[c.verdict],
       when: zoneWhen(z),
       action: c.action,
-      reasons: c.reasons.map((r) => `${r.vehicleIds.join(', ')}: ${r.why}`),
+      reasons: c.reasons.map((r) => (r.vehicleIds.length ? `${r.vehicleIds.join(', ')}: ${r.why}` : r.why)),
     };
   });
 }

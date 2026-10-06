@@ -157,3 +157,16 @@ test('works on a different site, including a zone that wraps past the loop end',
   assert.equal(zoneClearance(closing('North'), snap.trucks).verdict, 'NOT_CLEAR');
   assert.equal(zoneClearance(closing('Shaft'), snap.trucks).verdict, 'CLEAR');
 });
+
+test('B13 with the site link down every zone that is not open is UNSURE, even one a truck was seen in; with it up the usual rule', () => {
+  const { r, ids } = steady();
+  const trucks = r.fleet.snapshot().trucks;
+  const down = zoneClearance(closing('DECLINE'), trucks, { linkUp: false });
+  assert.equal(down.verdict, 'UNSURE');
+  assert.equal(down.action, HOLD_THE_SHOT);
+  assert.ok(down.reasons.some((x) => /site link down/.test(x.why)));
+  assert.ok(down.reasons.some((x) => x.vehicleIds.includes(ids[0]!)), 'what was seen is still listed');
+  assert.equal(zoneClearance(closing('L4_SOUTH'), trucks, { linkUp: false }).verdict, 'UNSURE', 'never CLEAR while the link is down');
+  assert.equal(zoneClearance(closing('L4_SOUTH'), trucks, { linkUp: true }).verdict, 'CLEAR');
+  assert.equal(zoneClearance(closing('DECLINE'), trucks, { linkUp: true }).verdict, 'NOT_CLEAR');
+});
