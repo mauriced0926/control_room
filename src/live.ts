@@ -13,7 +13,7 @@
 //
 // Time is the injected clock.
 import type { AlarmRaise } from './alarms.ts';
-import type { BlastEngine, ZoneClearanceView } from './blast.ts';
+import type { BlastEngine, BlastHold, ZoneClearanceView } from './blast.ts';
 import type { Clock, TimerHandle } from './clock.ts';
 import type { FleetSnapshot, FleetState } from './fleet.ts';
 import type { GatewayLink, LinkStatus } from './link.ts';
@@ -56,6 +56,7 @@ export interface LiveState {
   blastSafety: { active: boolean; note: string };
   clearance: ZoneClearanceView[]; // the engine's verdict per zone not open, with the last call made with the link up (B11, B13)
   blastAlarms: AlarmRaise[];      // the engine's open can't-clear and link-down alarms (src/alarms.ts shape)
+  blastHolds: BlastHold[];        // trucks the engine holds, for which zones and rules: "held for the blast in X"
   who: WhoView[];
   leases: Array<{ vehicleId: string; operatorId: string; sinceServerMs: number }>;
   commands: CommandView[];
@@ -92,7 +93,7 @@ export interface LiveOptions {
   registry: CommandRegistry;
   sessions: Sessions;
   log: (line: string) => void;
-  blast?: Pick<BlastEngine, 'clearances' | 'openAlarms' | 'subscribe'>;
+  blast?: Pick<BlastEngine, 'clearances' | 'openAlarms' | 'holds' | 'subscribe'>;
   blastSafetyActive?: boolean; // true only when the registry's safety gate is the blast engine's
 }
 
@@ -203,6 +204,7 @@ export class LiveHub {
       blastSafety: { active, note: active ? BLAST_SAFETY_ON : BLAST_SAFETY_OFF },
       clearance: this.#o.blast ? this.#o.blast.clearances(snap ?? this.#o.fleet.snapshot()) : [],
       blastAlarms: this.#o.blast ? this.#o.blast.openAlarms() : [],
+      blastHolds: this.#o.blast ? this.#o.blast.holds() : [],
       who: this.#who(),
       leases: reg.leases().map((l) => ({ vehicleId: l.vehicleId, operatorId: l.operatorId, sinceServerMs: l.sinceServerMs })),
       commands: this.#commands(now),

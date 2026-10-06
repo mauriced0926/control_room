@@ -350,6 +350,7 @@ test('the frame carries the engine\'s clearance per zone not open, its last call
     const up = sock.frames().at(-1)!.body.frame.live;
     assert.deepEqual(up.clearance.map((c: any) => c.zoneId), ['DECLINE']);
     assert.ok(up.clearance[0].lastWhileUp, 'the call is recorded with its time');
+    assert.ok(up.blastHolds.length > 0 && up.blastHolds.every((h: any) => h.zones.includes('DECLINE')), 'which trucks the engine holds, and for which zone');
     r.advance(15_000); // the link is down from 20 s; past the 5 s watchdog
     hub.tick();
     const down = sock.frames().at(-1)!.body.frame.live;
