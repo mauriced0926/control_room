@@ -10,6 +10,7 @@
     "test": "node --test \"test/**/*.test.ts\"",
     "test:slow": "node --test \"test/**/*.slow.ts\"",
     "test:browser": "node --test \"test/**/*.browser.ts\"",
+    "test:l4": "node tools/l4.ts",
     "player": "node player/main.ts",
     "screenshots": "node player/shoot.ts",
     "typecheck": "tsc --noEmit",
