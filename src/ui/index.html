@@ -21,6 +21,7 @@
     </div>
     <div id="live-bar" class="live-bar" hidden>
       <div id="who" class="who" aria-label="Who is on"></div>
+      <button id="audit-open" type="button" class="audit-open">Audit: who did what, when</button>
       <form method="post" action="/logout" class="logout"><span id="you"></span> <button type="submit">Log out</button></form>
     </div>
   </header>
@@ -44,9 +45,14 @@
   <div id="estop-pending" class="banners estop-pending" aria-live="assertive" hidden></div>
 
   <main id="main">
-    <section id="alarms" class="alarms" aria-label="Alarms and messages" hidden>
-      <h2>Alarms and messages <span class="hint">newest first</span></h2>
-      <div id="alarm-list"></div>
+    <section id="tray" class="tray" aria-label="Attention tray" hidden>
+      <h2>Needs you <span id="tray-count" class="hint"></span></h2>
+      <div id="tray-interrupts" aria-live="assertive"></div>
+      <div id="tray-notices"></div>
+      <details id="tray-silent-box" class="tray-silent">
+        <summary><span id="tray-silent-count">Shown, no sound</span> <span class="hint">· each says why it did not interrupt</span></summary>
+        <div id="tray-silent"></div>
+      </details>
     </section>
 
     <section class="clearance" aria-label="Zone clearance">
@@ -60,13 +66,44 @@
     </section>
 
     <section class="fleet" aria-label="Fleet">
-      <h2>Fleet <span class="hint">most urgent first</span></h2>
+      <h2>Fleet <span class="hint">most urgent first · click a truck for its detail and commands</span> <span id="order-paused" class="order-paused" hidden>order paused while you point at or tab through the table</span></h2>
       <table>
         <thead><tr><th>Truck</th><th>Data</th><th>Why here</th><th>State</th><th>Zone</th><th>Battery (pack's own %)</th><th>Control</th><th>Last command</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </section>
   </main>
+
+  <aside id="detail" class="drawer" aria-label="Truck detail" hidden>
+    <div class="drawer-head">
+      <h2 id="detail-title" tabindex="-1">Truck</h2>
+      <button id="detail-close" type="button" class="close" aria-label="Close truck detail">Close ✕</button>
+    </div>
+    <div id="detail-summary" class="detail-summary"></div>
+    <div id="detail-callout"></div>
+    <div id="detail-buttons" class="detail-buttons" role="group" aria-label="Commands"></div>
+    <p id="detail-result" class="detail-result" aria-live="polite"></p>
+    <h3>Commands <span class="hint">newest first · sent → acknowledged → effect seen</span></h3>
+    <ol id="detail-timeline" class="timeline"></ol>
+    <h3>Truck</h3>
+    <dl id="detail-facts" class="facts"></dl>
+  </aside>
+
+  <aside id="audit" class="drawer wide" aria-label="Audit" hidden>
+    <div class="drawer-head">
+      <h2>Audit: who did what, when</h2>
+      <button id="audit-close" type="button" class="close" aria-label="Close audit">Close ✕</button>
+    </div>
+    <form id="audit-form" class="audit-form">
+      <label>Truck <select id="audit-truck"></select></label>
+      <label>Date <input id="audit-date" type="date" required></label>
+      <label>Time <input id="audit-time" type="time" step="1" required></label>
+      <label>Either side <select id="audit-window"><option value="120000">2 min</option><option value="600000" selected>10 min</option><option value="3600000">1 hour</option><option value="21600000">6 hours</option></select></label>
+      <button type="submit">Show</button>
+    </form>
+    <p id="audit-note" class="hint">Every command on the truck that was open in that window: who sent it (an operator, or the system and its rule), what the site said, and what the truck did. Times are this computer's local time.</p>
+    <div id="audit-result"></div>
+  </aside>
 
   <script type="module" src="/src/ui/app.ts"></script>
 </body>

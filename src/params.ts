@@ -83,6 +83,10 @@ export const PARAMS = {
   estopAutoSendWithin: p(10_000, 'ms', 'decided', 'TESTING.md L7.8: a pending e-stop is sent on reconnect only within 10 s'),
   realertAfter: p(15 * 60_000, 'ms', 'decided', 'TESTING.md L2.63'),
   escalateAfter: p(30 * 60_000, 'ms', 'decided', 'TESTING.md L2.63'),
+  persistentAlertEvery: p(60_000, 'ms', 'decided', 'TESTING.md L2.63, nights: once escalation has nobody else to reach, the same person is alerted again every minute until someone acknowledges. A short tone a minute is persistent without being continuous (UI.md principle 3)'),
+  noticeItemFor: p(10 * 60_000, 'ms', 'decided', 'a silent item with no condition that ends it (a controller restart, a lost ack later confirmed) leaves the tray after 10 min; truck detail keeps it'),
+  restartMarkerFor: p(60_000, 'ms', 'decided', 'UI.md: a controller restart marks the fleet table\'s data column "for about a minute"'),
+  auditWindowDefault: p(10 * 60_000, 'ms', 'decided', 'the audit view shows commands open within 10 min either side of the time asked about; "3:12" from memory is rarely exact'),
 
   // The service and the operators' browsers (task 6b)
   livePushMinInterval: p(250, 'ms', 'decided', 'at most 4 pictures a second to each browser: faster than a person reads, slow enough that 140 trucks fit; trucks report at 5 Hz and chips glide between frames'),

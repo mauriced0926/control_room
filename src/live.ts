@@ -12,13 +12,20 @@
 // task adds the relay. Nothing here talks to the gateway; the registry does.
 //
 // Time is the injected clock.
+import { Alerting, ENDS_ON_ACK } from './alerting.ts';
+import { AlarmStore, type AlarmItem, type Person, type StoreEvent } from './attention.ts';
 import type { Clock, TimerHandle } from './clock.ts';
-import type { FleetState } from './fleet.ts';
+import type { FleetSnapshot, FleetState } from './fleet.ts';
 import type { GatewayLink, LinkStatus } from './link.ts';
 import { PARAMS } from './params.ts';
 import { ACTIONS, type Action } from './protocol.ts';
 import { summarise, type Actor, type CommandRecord, type CommandRegistry, type RegistryEvent } from './registry.ts';
 import type { Session, Sessions } from './sessions.ts';
+import type { Store } from './store.ts';
+import { TruckNotes, type TruckNote } from './trucknotes.ts';
+import { auditLines, type AuditLine } from './ui/audit.ts';
+import { heldBy, type HeldBy, type LeaseEnd } from './ui/detail.ts';
+import { CallMemory, clearanceRows, siteLink, type ClearanceRow, type VerdictFn } from './ui/overview.ts';
 import { siteData } from './ui/track.ts';
 import type { User } from './users.ts';
 
@@ -45,7 +52,6 @@ export interface CommandView {
   failure: string | null;
 }
 
-export interface Alarm { id: number; atServerMs: number; kind: string; vehicleId: string | null; message: string }
 export interface Notice { id: number; atServerMs: number; vehicleId: string | null; message: string }
 export interface WhoView { id: string; name: string; role: User['role']; screens: number }
 
@@ -55,13 +61,21 @@ export interface LiveState {
   who: WhoView[];
   leases: Array<{ vehicleId: string; operatorId: string; sinceServerMs: number }>;
   commands: CommandView[];
-  alarms: Alarm[];
+  attention: AlarmItem[];                 // the attention tray (src/attention.ts)
+  clearance: ClearanceRow[];              // the zone clearance panel, UNSURE while the site link is down
+  held: Record<string, HeldBy>;           // who left each holding truck there (L7.9)
+  restarts: Record<string, number>;       // each truck's latest controller restart, server ms
 }
+
+// What one screen gets for the truck it has open (UI.md screen 2).
+export interface TruckDetail { vehicleId: string; commands: CommandRecord[]; note: TruckNote }
 
 export const BLAST_SAFETY_OFF = 'Blast safety is NOT active in this build: nothing stops a truck being sent into a closing zone, and no truck is evacuated automatically.';
 
 export const MAX_SCREENS_PER_SESSION = 8;
-const MAX_ALARMS = 50;
+const DETAIL_COMMANDS = 20;
+const HISTORY_MAX_WINDOW = 6 * 3_600_000;
+const HISTORY_MAX_ROWS = 200;
 const MAX_NOTICES = 20;
 const MAX_TEXT = 4_096;          // a browser message, in bytes (ws refuses larger frames itself)
 const REFUSALS_BEFORE_CLOSE = 50;
@@ -78,6 +92,7 @@ interface Client {
   refusals: number;
   overLimit: number;
   closed: boolean;
+  watch: string | null; // the truck whose detail this screen has open
 }
 
 export interface LiveOptions {
@@ -87,12 +102,20 @@ export interface LiveOptions {
   registry: CommandRegistry;
   sessions: Sessions;
   log: (line: string) => void;
+  store?: Store;                        // the audit log: alarm acknowledgements go in it, and the audit view reads it
+  provisionalBlast?: () => boolean;     // the provisional can't-clear alarm; false once the blast engine raises its own
+  verdict?: VerdictFn;                  // the clearance verdict; the blast engine's once it is wired in
 }
 
 export class LiveHub {
   readonly #o: LiveOptions;
   readonly #clients = new Set<Client>();
-  readonly #alarms: Alarm[] = [];
+  readonly attention = new AlarmStore();
+  readonly notes = new TruckNotes();
+  readonly #alerting: Alerting;
+  readonly #calls = new CallMemory();
+  readonly #leaseEnds = new Map<string, LeaseEnd>();
+  #clearance: ClearanceRow[] | null = null;
   readonly #notices = new Map<string, Notice[]>();
   #nextId = 1;
   #seq = 0;
@@ -107,8 +130,11 @@ export class LiveHub {
     this.#unsub.push(o.fleet.subscribe(dirty));
     this.#unsub.push(o.link.subscribe((e) => {
       this.#dirty = true;
-      if (e.type === 'alarm') this.#alarm('site_link', null, e.message);
+      if (e.type === 'message' && e.msg.type === 'lease_event') this.#leaseEvent(e.msg);
     }));
+    this.#alerting = new Alerting({ fleet: o.fleet, link: o.link, registry: o.registry, store: this.attention, notes: this.notes, provisionalBlast: o.provisionalBlast ?? (() => true) });
+    this.#unsub.push(() => this.#alerting.stop());
+    this.#unsub.push(this.attention.subscribe((e) => this.#attentionEvent(e)));
     this.#unsub.push(o.registry.subscribe((e) => this.#registryEvent(e)));
     this.#unsub.push(o.sessions.onEnd((s) => this.closeSession(s.id, 'session ended')));
   }
@@ -142,7 +168,7 @@ export class LiveHub {
 
   // A browser has connected with a session the HTTP layer has already checked.
   connect(sock: LiveSocket, session: Session): { receive(data: unknown, isBinary: boolean): void; closed(): void } {
-    const c: Client = { sock, session, tokens: this.#burst(), tokensAt: this.#o.clock.now(), refusals: 0, overLimit: 0, closed: false };
+    const c: Client = { sock, session, tokens: this.#burst(), tokensAt: this.#o.clock.now(), refusals: 0, overLimit: 0, closed: false, watch: null };
     this.#clients.add(c);
     this.#o.log(`browser connected: ${session.user.id} (${session.user.role}); ${this.#clients.size} open`);
     this.#push(c, this.#sharedFrame(false)); // its first picture at once
@@ -171,9 +197,28 @@ export class LiveHub {
       if (!this.#o.sessions.get(c.session.id)) { this.#drop(c, 4401, 'session ended'); continue; }
       this.#o.sessions.touch(c.session.id);
     }
+    this.#evaluate();
     if (!this.#dirty && now - this.#lastSent < PARAMS.liveFrameMaxInterval.value) return;
     const shared = this.#sharedFrame(true);
-    for (const c of this.#clients) this.#push(c, shared);
+    const details = new Map<string, string>();
+    for (const c of this.#clients) this.#push(c, shared, details);
+  }
+
+  // Alerting runs on every tick whether or not a screen is open (CONTEXT.md assumption 1): the
+  // picture's alarms, re-alerts and escalation, and the clearance panel's last calls.
+  #evaluate(): void {
+    const snap = this.#o.fleet.snapshot();
+    this.#alerting.evaluate(snap);
+    this.attention.tick(snap.atServerMs, this.#present());
+    this.#clearance = this.#clearanceOf(snap);
+  }
+
+  #clearanceOf(snap: FleetSnapshot): ClearanceRow[] {
+    return clearanceRows(snap, { linkDown: siteLink(snap).state === 'down', memory: this.#calls, ...(this.#o.verdict ? { verdict: this.#o.verdict } : {}) });
+  }
+
+  #present(): Person[] {
+    return this.#who().map((w) => ({ id: w.id, name: w.name, role: w.role }));
   }
 
   state(): LiveState {
@@ -189,7 +234,10 @@ export class LiveHub {
       who: this.#who(),
       leases: reg.leases().map((l) => ({ vehicleId: l.vehicleId, operatorId: l.operatorId, sinceServerMs: l.sinceServerMs })),
       commands: this.#commands(now),
-      alarms: [...this.#alarms],
+      attention: this.attention.list(),
+      clearance: this.#clearance ?? this.#clearanceOf(this.#o.fleet.snapshot()),
+      held: this.#held(),
+      restarts: Object.fromEntries(Object.entries(this.notes.all()).flatMap(([v, n]) => (n.restarts[0] ? [[v, n.restarts[0].atServerMs]] : []))),
     };
   }
 
@@ -205,12 +253,56 @@ export class LiveHub {
     return JSON.stringify({ seq: ++this.#seq, sentServerMs: this.#o.fleet.serverNow(), frame });
   }
 
-  #push(c: Client, shared: string): void {
+  #push(c: Client, shared: string, details = new Map<string, string>()): void {
     if (c.closed) return;
     if (c.sock.bufferedAmount > PARAMS.liveMaxBufferedBytes.value) return; // behind: skip, never queue old pictures
     const you = c.session.user;
     const notices = this.#notices.get(you.id) ?? [];
-    this.#send(c, `{"type":"frame","you":${JSON.stringify({ id: you.id, name: you.name, role: you.role })},"notices":${JSON.stringify(notices)},"body":${shared}}`);
+    let detail = 'null';
+    if (c.watch) {
+      detail = details.get(c.watch) ?? JSON.stringify(this.detail(c.watch));
+      details.set(c.watch, detail);
+    }
+    this.#send(c, `{"type":"frame","you":${JSON.stringify({ id: you.id, name: you.name, role: you.role })},"notices":${JSON.stringify(notices)},"detail":${detail},"body":${shared}}`);
+  }
+
+  detail(vehicleId: string): TruckDetail {
+    const commands = this.#o.registry.list({ vehicleId }).sort((a, b) => b.createdMs - a.createdMs).slice(0, DETAIL_COMMANDS);
+    return { vehicleId, commands, note: this.notes.get(vehicleId) };
+  }
+
+  #held(): Record<string, HeldBy> {
+    const out: Record<string, HeldBy> = {};
+    const records = this.#o.registry.list();
+    for (const t of this.#o.fleet.snapshot().trucks) {
+      const h = heldBy(t, records, this.#leaseEnds.get(t.vehicleId));
+      if (h) out[t.vehicleId] = h;
+    }
+    return out;
+  }
+
+  #leaseEvent(m: Record<string, unknown>): void {
+    const v = typeof m.vehicle_id === 'string' ? m.vehicle_id : null;
+    if (!v || !['RELEASED', 'EXPIRED', 'REVOKED'].includes(String(m.event))) return;
+    const str = (x: unknown) => (typeof x === 'string' ? x : null);
+    this.#leaseEnds.set(v, { vehicleId: v, operatorId: str(m.operator_id), event: String(m.event), reason: str(m.reason), by: str(m.by_operator), atServerMs: typeof m.server_time_ms === 'number' ? m.server_time_ms : this.#o.fleet.serverNow() });
+  }
+
+  // Interrupts, their acknowledgements and escalations go in the audit log beside the commands
+  // (L8.5). Silent items come and go with the data and are not logged.
+  #attentionEvent(e: StoreEvent): void {
+    this.#dirty = true;
+    const st = this.#o.store;
+    const i = e.item;
+    if (!st || !i.interrupt) return;
+    const base = { atMs: this.#o.clock.now(), serverMs: this.#o.fleet.serverNow(), vehicleId: i.vehicleId, recordId: null, commandId: null, inputs: undefined };
+    const sys = { ...base, actorKind: 'system' as const, actor: 'system', rule: i.rule.slice(0, 200) };
+    try {
+      if (e.type === 'alert' && (e.alert.why === 'raised' || e.alert.why === 'upgraded')) st.audit({ ...sys, event: 'alarm_raised', what: i.message, why: i.action });
+      else if (e.type === 'escalated') st.audit({ ...sys, event: 'alarm_escalated', what: i.message, why: i.escalation?.words ?? null });
+      else if (e.type === 'acknowledged' && i.ack) st.audit({ ...base, actorKind: 'operator', actor: i.ack.by, rule: null, event: 'alarm_acknowledged', what: `${i.ack.name} acknowledged: ${i.message}`, why: null });
+      else if (e.type === 'cleared') st.audit({ ...sys, event: 'alarm_cleared', what: i.message, why: i.cleared?.reason ?? null });
+    } catch (err) { this.#o.log(`could not write an alarm to the audit log: ${err instanceof Error ? err.message : String(err)}`); }
   }
 
   #send(c: Client, text: string): void {
@@ -246,20 +338,13 @@ export class LiveHub {
 
   #registryEvent(e: RegistryEvent): void {
     this.#dirty = true;
-    if (e.type === 'alarm') this.#alarm(e.kind, e.vehicleId, e.message);
-    else if (e.type === 'notify') {
+    if (e.type === 'notify') {
       for (const to of e.to) {
         const list = this.#notices.get(to) ?? [];
         list.unshift({ id: this.#nextId++, atServerMs: this.#o.fleet.serverNow(), vehicleId: e.vehicleId, message: e.message });
         this.#notices.set(to, list.slice(0, MAX_NOTICES));
       }
     }
-  }
-
-  #alarm(kind: string, vehicleId: string | null, message: string): void {
-    this.#alarms.unshift({ id: this.#nextId++, atServerMs: this.#o.fleet.serverNow(), kind, vehicleId, message });
-    this.#alarms.length = Math.min(this.#alarms.length, MAX_ALARMS);
-    this.#dirty = true;
   }
 
   // ---- in ----
@@ -286,6 +371,9 @@ export class LiveHub {
       switch (msg.type) {
         case 'command': this.#command(c, ref, msg); break;
         case 'cancel': case 'reconfirm': this.#pending(c, ref, msg); break;
+        case 'ack': this.#ack(c, ref, msg); break;
+        case 'watch': this.#watch(c, ref, msg); break;
+        case 'history': this.#history(c, ref, msg); break;
         case 'drive':
           // No drive path yet (L6.3's drive half waits for the driving task). Refused, and nothing is
           // sent to the gateway: the truck's deadman stops it.
@@ -341,6 +429,38 @@ export class LiveHub {
       this.#reply(c, ref, { ok: true, command: view(out, this.#o.clock.now()) });
     }
     this.#dirty = true;
+  }
+
+  // An acknowledgement is the session's operator's, never the message's.
+  #ack(c: Client, ref: string | null, m: Incoming): void {
+    const key = m.key;
+    if (typeof key !== 'string' || key.length > 200) { this.#refuse(c, ref, 'key must be an alarm key'); return; }
+    const u = c.session.user;
+    const out = this.attention.acknowledge(key, { id: u.id, name: u.name, role: u.role }, this.#o.fleet.serverNow());
+    if (!out.ok) { this.#reply(c, ref, { ok: false, error: out.error }); return; }
+    if (ENDS_ON_ACK.has(out.item.kind)) this.attention.clear(key, `acknowledged by ${u.name}`, this.#o.fleet.serverNow());
+    this.#dirty = true;
+    this.#reply(c, ref, { ok: true, key });
+  }
+
+  #watch(c: Client, ref: string | null, m: Incoming): void {
+    const v = m.vehicleId;
+    if (v !== null && (typeof v !== 'string' || !this.#o.fleet.snapshot().trucks.some((t) => t.vehicleId === v))) { this.#refuse(c, ref, 'vehicleId must be a truck id, or null'); return; }
+    c.watch = v as string | null;
+    this.#reply(c, ref, { ok: true, vehicleId: v });
+    if (v) this.#push(c, this.#sharedFrame(false));
+  }
+
+  // The audit view (L8.4): every command on a truck open within the window around a moment.
+  #history(c: Client, ref: string | null, m: Incoming): void {
+    const v = m.vehicleId, at = m.atServerMs, w = m.windowMs ?? PARAMS.auditWindowDefault.value;
+    if (typeof v !== 'string' || v.length > 64) { this.#refuse(c, ref, 'vehicleId must be a truck id'); return; }
+    if (typeof at !== 'number' || !Number.isFinite(at)) { this.#refuse(c, ref, 'atServerMs must be a time'); return; }
+    if (typeof w !== 'number' || !(w > 0) || w > HISTORY_MAX_WINDOW) { this.#refuse(c, ref, 'windowMs must be between 0 and 6 hours'); return; }
+    if (!this.#o.store) { this.#refuse(c, ref, 'No command log in this service.'); return; }
+    const rows = this.#o.store.history(v, at - w, at + w);
+    const lines: AuditLine[] = auditLines(rows.slice(-HISTORY_MAX_ROWS), at);
+    this.#reply(c, ref, { ok: true, history: { vehicleId: v, atServerMs: at, windowMs: w, lines, truncated: rows.length > HISTORY_MAX_ROWS } });
   }
 
   #actor(s: Session): Actor {

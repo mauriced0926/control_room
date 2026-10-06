@@ -17,6 +17,7 @@ import { DEFAULT_BEHAVIOUR } from '../../fake/behaviour.ts';
 import { DLH1 } from '../../fake/dlh1.ts';
 import { LIVE_DAY, planTrucks, type Faults } from '../../fake/faults.ts';
 import { FakeGateway, type Connection } from '../../fake/gateway.ts';
+import type { Blasts, TruckInit } from '../../fake/model.ts';
 import { listenTls, type TlsServer } from '../../fake/tls.ts';
 
 export const HAVE_OPENSSL = !spawnSync('openssl', ['version'], { stdio: 'ignore' }).error;
@@ -46,11 +47,11 @@ export class FakeSite {
   readonly seed: number;
   readonly faults: Faults;
 
-  constructor(tls: { key: Buffer; cert: Buffer }, o: { seed?: number; faults?: Faults; blasts?: 'random' | 'none' } = {}) {
+  constructor(tls: { key: Buffer; cert: Buffer }, o: { seed?: number; faults?: Faults; blasts?: Blasts; trucks?: TruckInit[] } = {}) {
     this.#tls = tls;
     this.seed = o.seed ?? 11;
     this.faults = o.faults ?? LIVE_DAY;
-    this.gw = new FakeGateway(new SystemClock(), { seed: this.seed, site: DLH1, blasts: o.blasts ?? 'random', faults: this.faults });
+    this.gw = new FakeGateway(new SystemClock(), { seed: this.seed, site: DLH1, blasts: o.blasts ?? 'random', faults: this.faults, ...(o.trucks ? { trucks: o.trucks } : {}) });
     const receive = this.gw.receive.bind(this.gw);
     this.gw.receive = (conn: Connection, line: string) => {
       this.lines.push(line);

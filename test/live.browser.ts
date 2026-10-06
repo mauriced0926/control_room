@@ -78,7 +78,8 @@ test('L9.2 site link down: the picture greys, a banner says so and counts, ages 
   await site.down();
   await page.waitForFunction(() => document.getElementById('site-link')?.dataset.state === 'down', null, { timeout: 8_000 });
   assert.equal(await page.$eval('body', (b) => b.classList.contains('aged')), true);
-  assert.notEqual(await page.$eval('main', (m) => getComputedStyle(m).filter), 'none');
+  assert.notEqual(await page.$eval('main section.track', (m) => getComputedStyle(m).filter), 'none');
+  assert.equal(await page.$eval('main section.clearance', (m) => getComputedStyle(m).filter), 'none', 'the clearance panel is never greyed');
   const banner = await page.$eval('#banners .banner.down', (b) => b.textContent!);
   assert.match(banner, /Site link DOWN: no heartbeat for \d+ s\. Everything below is at least that old; ages keep counting\./);
   assert.equal(await state('service-link'), 'up', 'the service itself is still there');

@@ -99,7 +99,7 @@ test('state table: site link down greys everything, with a banner that counts', 
   const down = p.frame().player.bookmarks.find((b) => b.text === 'site link down (no heartbeat)')!;
   await open('link-drop-in-notice', down.offsetMs + 10_000);
   assert.equal(await page.$eval('body', (b) => b.classList.contains('aged')), true);
-  assert.notEqual(await page.$eval('main', (m) => getComputedStyle(m).filter), 'none');
+  assert.notEqual(await page.$eval('main section.track', (m) => getComputedStyle(m).filter), 'none');
   const banner = await page.$eval('#banners .banner.down', (b) => b.textContent);
   assert.match(banner!, /Site link DOWN: no heartbeat for 1\d s/);
   assert.equal(await page.$eval('#site-link', (e) => (e as HTMLElement).dataset.state), 'down');

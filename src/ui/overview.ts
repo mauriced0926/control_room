@@ -1,8 +1,9 @@
 // The Overview's words and order (UI.md screen 1): the zone clearance panel, the fleet table sorted
 // by attention, and the link indicators. Pure: a fleet snapshot in, plain data out. The browser only
 // draws it.
-import { zoneClearance, type Verdict } from '../clearance.ts';
+import { HOLD_THE_SHOT, zoneClearance, type Clearance, type Verdict } from '../clearance.ts';
 import type { FleetSnapshot, TruckView, ZoneView } from '../fleet.ts';
+import { PARAMS } from '../params.ts';
 import { age, countdown, dataState, elapsed, faultWords } from '../words.ts';
 
 // ---- zone clearance panel ----
@@ -15,7 +16,13 @@ export interface ClearanceRow {
   when: string; // "closes in 1:23", "closed 0:40 ago"
   action: string | null;
   reasons: string[]; // "<truck>: data frozen ..."
+  linkDown: boolean; // the site link is down: the verdict is UNSURE whatever the data said
+  was: { verdictWords: ClearanceRow['verdictWords']; agoMs: number } | null; // the last call made with the link up
 }
+
+// The verdict for one zone. The blast engine (task 5) will supply its own; until then, the
+// provisional rule in src/clearance.ts.
+export type VerdictFn = (zone: ZoneView, trucks: readonly TruckView[]) => Clearance;
 
 const VERDICT_WORDS: Record<Verdict, ClearanceRow['verdictWords']> = { CLEAR: 'CLEAR', NOT_CLEAR: 'NOT CLEAR', UNSURE: 'UNSURE' };
 
@@ -32,19 +39,48 @@ export function zoneWhen(z: ZoneView): string {
 
 // Every zone that is closing, closed, or of unknown status, in route order: rows stay where they are
 // while verdicts change, so the operator finds a zone by its name and place.
-export function clearanceRows(snap: FleetSnapshot): ClearanceRow[] {
+//
+// While the site link is down (BLAST.md B13; UI.md), every such zone is UNSURE in full colour, with
+// the last call made while the link was up beneath it and its age: "was CLEAR, 12 s ago". Nothing on
+// screen can say a zone is clear when no data is arriving. `memory` keeps those last calls; without
+// it there is no "was" line.
+export function clearanceRows(snap: FleetSnapshot, o: { linkDown?: boolean; memory?: CallMemory; verdict?: VerdictFn } = {}): ClearanceRow[] {
+  const verdictOf = o.verdict ?? zoneClearance;
+  const linkDown = o.linkDown ?? false;
+  o.memory?.forgetOpen(snap);
   return snap.zones.filter((z) => z.status !== 'OPEN').map((z) => {
-    const c = zoneClearance(z, snap.trucks);
+    const c = verdictOf(z, snap.trucks);
+    const last = o.memory?.call(z.zoneId, linkDown ? null : c.verdict, snap.atServerMs) ?? null;
+    const verdict: Verdict = linkDown ? 'UNSURE' : c.verdict;
+    const reasons = c.reasons.map((r) => `${r.vehicleIds.join(', ')}: ${r.why}`);
     return {
       zoneId: z.zoneId,
       status: z.status ?? 'status unknown',
-      verdict: c.verdict,
-      verdictWords: VERDICT_WORDS[c.verdict],
+      verdict,
+      verdictWords: VERDICT_WORDS[verdict],
       when: zoneWhen(z),
-      action: c.action,
-      reasons: c.reasons.map((r) => `${r.vehicleIds.join(', ')}: ${r.why}`),
+      action: verdict === 'CLEAR' ? null : (c.action ?? HOLD_THE_SHOT),
+      reasons: linkDown ? ['Site link down: no data is arriving, so nobody can see whether a truck has gone in.', ...reasons] : reasons,
+      linkDown,
+      was: linkDown && last ? { verdictWords: VERDICT_WORDS[last.verdict], agoMs: Math.max(0, snap.atServerMs - last.atServerMs) } : null,
     };
   });
+}
+
+// The last verdict per zone made while the site link was up. Forgotten when the zone reopens, so a
+// call from an earlier blast is never shown as this one's.
+export class CallMemory {
+  readonly #calls = new Map<string, { verdict: Verdict; atServerMs: number }>();
+
+  // Records `verdict` (null: the link is down, nothing to record) and returns the last call.
+  call(zoneId: string, verdict: Verdict | null, atServerMs: number): { verdict: Verdict; atServerMs: number } | null {
+    if (verdict !== null) this.#calls.set(zoneId, { verdict, atServerMs });
+    return this.#calls.get(zoneId) ?? null;
+  }
+
+  forgetOpen(snap: FleetSnapshot): void {
+    for (const z of snap.zones) if (z.status === 'OPEN') this.#calls.delete(z.zoneId);
+  }
 }
 
 // ---- fleet table ----
@@ -55,6 +91,7 @@ export interface FleetRow {
   attention: string | null; // why it sits where it does, in words
   dataKind: TruckView['confidence'];
   data: string;
+  restarted: string | null; // a controller restart in the last minute, for the data column's marker
   state: string;
   fault: string | null; // the fault codes as the truck reports them
   zone: string;
@@ -156,7 +193,9 @@ export const NO_COMMAND_YET = '—';
 
 // `lastCommands`: each truck's latest command in words ("HOLD by priya: done: ..."), from the live
 // service. The fixture player has none.
-export function fleetRows(snap: FleetSnapshot, lastCommands: ReadonlyMap<string, string> = new Map()): FleetRow[] {
+// `restarts`: each truck's latest controller restart, in server time (UI.md: a small marker in the
+// data column for about a minute).
+export function fleetRows(snap: FleetSnapshot, lastCommands: ReadonlyMap<string, string> = new Map(), restarts: ReadonlyMap<string, number> = new Map()): FleetRow[] {
   const closing = new Map(snap.zones.filter((z) => z.status !== 'OPEN').map((z) => [z.zoneId, z]));
   const rows = snap.trucks.map((t, i) => {
     const { tier, why } = tierOf(t, closing);
@@ -170,6 +209,7 @@ export function fleetRows(snap: FleetSnapshot, lastCommands: ReadonlyMap<string,
         attention: why,
         dataKind: t.confidence,
         data: dataState(t),
+        restarted: restartMarker(restarts.get(t.vehicleId), snap.atServerMs),
         state: stateCell(t),
         fault: (t.faults?.value.length ?? 0) > 0 ? t.faults!.value.join(', ') : null,
         zone: zoneCell(t),
@@ -183,6 +223,12 @@ export function fleetRows(snap: FleetSnapshot, lastCommands: ReadonlyMap<string,
   });
   rows.sort((a, b) => a.row.tier - b.row.tier || a.i - b.i);
   return rows.map((r) => r.row);
+}
+
+export function restartMarker(atServerMs: number | undefined, nowServerMs: number): string | null {
+  if (atServerMs === undefined) return null;
+  const ago = nowServerMs - atServerMs;
+  return ago >= 0 && ago < PARAMS.restartMarkerFor.value ? `controller restarted ${age(ago)} ago` : null;
 }
 
 // ---- links ----
