@@ -56,6 +56,8 @@ async function page(user: keyof typeof PASSWORDS): Promise<Page> {
   ctxs.push(ctx);
   const p = await ctx.newPage();
   p.on('pageerror', (e) => console.log(`PAGEERROR (${user}): ${e.message}`)); // a script error would leave a screen silently wrong
+    p.on('framenavigated', (f) => { if (f === p.mainFrame()) console.log(`NAV (${user}) ${Date.now()} ${f.url()}`); });
+    p.on('websocket', (ws) => { console.log(`WSOPEN (${user}) ${Date.now()}`); ws.on('close', () => console.log(`WSCLOSE (${user}) ${Date.now()}`)); });
   await login(p, user);
   // Real focus: with emulation off, another page coming to the front blurs this one, as a desktop does.
   // Set after logging in: the override does not survive the navigations of the login.

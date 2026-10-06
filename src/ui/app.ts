@@ -266,7 +266,7 @@ function renderRows(snap: FleetSnapshot): void {
     if (!tr) tr = el('tr', { 'data-truck': r.vehicleId, tabindex: '0', title: `Open ${r.vehicleId}` });
     tr.className = `${r.dataKind}${r.vehicleId === openTruck ? ' open' : ''}`;
     tr.dataset.kind = r.dataKind;
-    tr.replaceChildren(...rowCells(r, heldWords));
+    patchCells(tr, rowCells(r, heldWords));
     return tr;
   });
   if (trs.length !== body.children.length || trs.some((tr, i) => body.children[i] !== tr)) {
@@ -308,6 +308,26 @@ function setupRowFreeze(): void {
   table.addEventListener('pointerleave', () => clock.setTimeout(thaw, 0));
   table.addEventListener('focusin', freeze);
   table.addEventListener('focusout', () => clock.setTimeout(thaw, 0));
+}
+
+// A row's cells stay the same elements from frame to frame; only a cell whose contents changed is
+// redrawn. Replacing the cells on every frame (4 a second) lost clicks: when a cell is swapped between
+// the press and the release, Chrome delivers no click at all, so an operator's click on a truck could
+// silently do nothing.
+function patchCells(tr: HTMLTableRowElement, cells: HTMLElement[]): void {
+  if (tr.children.length !== cells.length) { tr.replaceChildren(...cells); return; }
+  cells.forEach((fresh, i) => {
+    const td = tr.children[i] as HTMLElement;
+    if (td.className !== fresh.className) td.className = fresh.className;
+    if (td.innerHTML === fresh.innerHTML) return;
+    // The cell's own box (div.cell) stays too, which is what a click usually lands on; only what is
+    // inside it is swapped.
+    const box = td.firstElementChild as HTMLElement | null, freshBox = fresh.firstElementChild as HTMLElement | null;
+    if (td.childElementCount === 1 && box && freshBox && box.tagName === freshBox.tagName) {
+      if (box.className !== freshBox.className) box.className = freshBox.className;
+      box.replaceChildren(...freshBox.childNodes);
+    } else td.replaceChildren(...fresh.childNodes);
+  });
 }
 
 function rowCells(r: ReturnType<typeof fleetRows>[number], heldWords: (id: string) => string | null): HTMLElement[] {
