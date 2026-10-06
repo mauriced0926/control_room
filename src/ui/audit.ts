@@ -1,4 +1,4 @@
-// The audit view (UI.md screen 4; TESTING.md L8.4): "who moved HT-06 at 3:12?" answered from
+// The audit view (UI.md screen 4; TESTING.md L8.4): "who moved that truck at 3:12?" answered from
 // store.history(), one query. Pure: history rows in, words out; times stay as server ms for the
 // browser to show in local time.
 import type { HistoryRow } from '../store.ts';

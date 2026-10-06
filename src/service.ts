@@ -84,7 +84,7 @@ export async function startService(o: ServiceOptions): Promise<Service> {
     }
   };
 
-  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log });
+  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log, store });
   hub.start();
   const http = await startHttp({ ...o.http, users: o.users, sessions, throttle: new LoginThrottle(clock), hub, onAuth, log });
   link.start(); // the one gateway connection (L6.4): nothing a browser does opens another

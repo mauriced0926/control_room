@@ -42,7 +42,7 @@ function hubRig(): HubRig {
   r.advance(1_000); // telemetry from every truck
   const sessions = new Sessions(r.clock);
   const logs: string[] = [];
-  const hub = new LiveHub({ clock: r.clock, fleet: r.fleet, link: r.link, registry: r.registry, sessions, log: (l) => logs.push(l) });
+  const hub = new LiveHub({ clock: r.clock, fleet: r.fleet, link: r.link, registry: r.registry, sessions, log: (l) => logs.push(l), store: r.store });
   return {
     r, hub, sessions, logs,
     open(user) {
@@ -301,7 +301,7 @@ test('L7.8 through the hub: an e-stop pressed while the site link is down is pen
     h.hub.tick();
     const shown = p.sock.frames().at(-1)!.body.frame.live.commands.find((c: any) => c.action === 'ESTOP');
     assert.equal(shown.waitingForLink, true, 'every screen shows it pending');
-    assert.ok(h.hub.state().alarms.some((a) => a.kind === 'estop_undelivered' && /NOT delivered/.test(a.message)));
+    assert.ok(h.hub.state().attention.some((a) => a.kind === 'estop_undelivered' && a.interrupt && /NOT delivered/.test(a.message)), 'an interrupt in the attention tray');
 
     h.r.clock.advance(150);
     const notMine = d.say({ type: 'cancel', recordId: res.command.id });
@@ -335,5 +335,76 @@ test('L7.8 through the hub: the owner can cancel a pending e-stop, and it is nev
     h.r.until(() => h.r.link.isUp(), 9_000);
     h.r.advance(2_000);
     assert.ok(!h.commandsAtGateway().some((x) => x.action === 'ESTOP'));
+  } finally { h.done(); }
+});
+
+test('an acknowledgement is the session\'s operator\'s, whatever the message claims; it goes in the audit log; a second one is refused naming the first', () => {
+  const h = hubRig();
+  try {
+    const p = h.open(PRIYA);
+    const d = h.open(DAVE);
+    h.r.dialer.mode = 'outage';
+    h.r.dialer.dropAll();
+    h.r.until(() => !h.r.link.isUp(), 1_000);
+    p.say({ type: 'command', action: 'ESTOP', vehicleId: 'HT-09' });
+    h.hub.tick();
+    const item = h.hub.state().attention.find((a) => a.kind === 'estop_undelivered')!;
+    assert.equal(item.interrupt, true);
+    h.r.clock.advance(150);
+    const res = d.say({ type: 'ack', key: item.key, operator_id: 'marta', by: 'marta' });
+    assert.equal(res.ok, true);
+    assert.equal(h.hub.attention.get(item.key)!.ack!.by, 'dave');
+    h.r.clock.advance(150);
+    const again = p.say({ type: 'ack', key: item.key });
+    assert.deepEqual([again.ok, again.error], [false, 'Already acknowledged by Dave.']);
+    const audit = h.r.store.auditLog('HT-09').filter((a) => a.event.startsWith('alarm_'));
+    assert.deepEqual(audit.map((a) => [a.event, a.actorKind, a.actor]), [['alarm_raised', 'system', 'system'], ['alarm_acknowledged', 'operator', 'dave']]);
+    h.r.clock.advance(150);
+    assert.equal(p.say({ type: 'ack', key: 42 }).ok, false);
+  } finally { h.done(); }
+});
+
+test('watching a truck: that screen\'s frames carry its command timeline and notes; other screens\' do not', () => {
+  const h = hubRig();
+  try {
+    const p = h.open(PRIYA);
+    const d = h.open(DAVE);
+    p.say({ type: 'command', action: 'HOLD', vehicleId: 'HT-03' });
+    h.r.clock.advance(150);
+    assert.equal(p.say({ type: 'watch', vehicleId: 'HT-03' }).ok, true);
+    h.r.clock.advance(PARAMS.liveFrameMaxInterval.value);
+    h.hub.tick();
+    const mine = p.sock.frames().at(-1)!;
+    assert.equal(mine.detail.vehicleId, 'HT-03');
+    assert.deepEqual(mine.detail.commands.map((c: any) => [c.action, c.actor.operatorId]), [['HOLD', 'priya']]);
+    assert.equal(d.sock.frames().at(-1)!.detail, null);
+    h.r.clock.advance(150);
+    assert.equal(p.say({ type: 'watch', vehicleId: 'HT-99' }).ok, false);
+    h.r.clock.advance(150);
+    p.say({ type: 'watch', vehicleId: null });
+    h.r.clock.advance(PARAMS.liveFrameMaxInterval.value);
+    h.hub.tick();
+    assert.equal(p.sock.frames().at(-1)!.detail, null);
+  } finally { h.done(); }
+});
+
+test('L8.4 through the hub: "who moved HT-03 then?" is one request, answered from the command log', () => {
+  const h = hubRig();
+  try {
+    const p = h.open(PRIYA);
+    const at = h.r.fleet.serverNow();
+    p.say({ type: 'command', action: 'HOLD', vehicleId: 'HT-03' });
+    h.r.advance(10_000);
+    const d = h.open(DAVE);
+    const res = d.say({ type: 'history', vehicleId: 'HT-03', atServerMs: at + 2_000 });
+    assert.equal(res.ok, true);
+    assert.equal(res.history.lines.length, 1);
+    const l = res.history.lines[0];
+    assert.deepEqual([l.action, l.who, l.closest], ['HOLD', 'priya (operator)', true]);
+    assert.match(l.outcome, /^done: HT-03 is holding/);
+    h.r.clock.advance(150);
+    assert.equal(d.say({ type: 'history', vehicleId: 'HT-03', atServerMs: 'yesterday' }).ok, false);
+    h.r.clock.advance(150);
+    assert.equal(d.say({ type: 'history', vehicleId: 'HT-03', atServerMs: at, windowMs: 1e12 }).ok, false);
   } finally { h.done(); }
 });
