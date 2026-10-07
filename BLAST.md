@@ -174,3 +174,15 @@ For `README.md` §5, "the cases where it can't":
 
 Added in review: B11 judges every truck by range; path prediction (with duty stops) shared by B2 and
 B6; B16 for commands that can't be confirmed; B12's `HOLD` before `RESUME`; the limits above.
+
+## Decisions after the 200-seed run (2026-10-07), not yet built
+
+8. **B4 lets a truck leave forward on its own** before holding it: if path prediction (with duty
+   stops) has it out through the far boundary into an open zone in time, it gets no command, with
+   the same last-safe-moment guard as B2. Holding is the fallback only when neither way works. The
+   200-seed run traced the largest share of R0 failures to B4 holding such trucks.
+9. **Two can't-clear alarms, not one.** "A truck is in there and can't get out" and "I can't confirm
+   where truck X is" both say "Radio the shot firer to hold the shot", with their different reasons.
+   M3 counts only the first. Most false alarms in the 200-seed run were the second kind.
+10. **A refused drive input goes out as throttle 0**, only in reply to fresh operator input, never on
+    a timer (CLAUDE.md invariant 3). The driving relay already behaves this way.
