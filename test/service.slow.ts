@@ -82,7 +82,7 @@ test('L13.1 (outside Docker) starts with only the three GATEWAY_* variables and 
   c.close();
 
   const out = svc.output();
-  assert.match(out, /BLAST SAFETY NOT ACTIVE/);
+  assert.doesNotMatch(out, /BLAST SAFETY NOT ACTIVE/);
   assert.match(out, /USING DEMO USERS/);
   assert.ok(!/ExperimentalWarning/.test(out), 'no experimental warnings');
   assertNoSecrets(out, [demoPassword('priya'), cookie.split('=')[1]!]);

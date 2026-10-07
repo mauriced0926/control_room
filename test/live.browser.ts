@@ -57,7 +57,7 @@ test('log in, and the live Overview: every truck, both links up, who\'s on, the 
   assert.match(await page.textContent('#who') ?? '', /Priya · operator/);
   assert.match(await page.textContent('#you') ?? '', /Priya \(operator\)/);
   assert.equal(await page.$$eval('#estop-trucks button', (bs) => bs.length), 12);
-  assert.match(await page.textContent('#banners') ?? '', /Blast safety is NOT active/);
+  assert.doesNotMatch(await page.textContent('#banners') ?? '', /Blast safety is NOT active/);
   assert.equal(await page.$eval('body', (b) => b.classList.contains('aged')), false);
   assert.ok(await page.$('g.chip'), 'trucks on the track');
 });

@@ -71,7 +71,7 @@ export interface HistoryRow {
   failure: unknown;
 }
 
-const OPEN_STATUSES = ['pending', 'sent', 'acknowledged'];
+const OPEN_STATUSES = ['pending', 'sent', 'acknowledged', 'unverified'];
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS commands (
@@ -135,6 +135,12 @@ CREATE TABLE IF NOT EXISTS audit (
   inputs_json TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_vehicle ON audit (vehicle_id, server_ms);
+
+CREATE TABLE IF NOT EXISTS engine_state (
+  name TEXT PRIMARY KEY,
+  json TEXT NOT NULL,
+  updated_ms INTEGER NOT NULL
+);
 `;
 
 const APPEND_ONLY = ['sends', 'acks', 'audit'];
@@ -181,6 +187,9 @@ export class Store {
            AND (json_extract(c.record_json, '$.closedServerMs') IS NULL OR json_extract(c.record_json, '$.closedServerMs') >= ?)
          ORDER BY c.created_server_ms`),
       auditAll: db.prepare('SELECT * FROM audit ORDER BY seq'),
+      putState: db.prepare(`INSERT INTO engine_state (name, json, updated_ms) VALUES (?, ?, ?)
+        ON CONFLICT (name) DO UPDATE SET json = excluded.json, updated_ms = excluded.updated_ms`),
+      getState: db.prepare('SELECT json FROM engine_state WHERE name = ?'),
       auditVehicle: db.prepare('SELECT * FROM audit WHERE vehicle_id = ? ORDER BY seq'),
     };
   }
@@ -263,6 +272,17 @@ export class Store {
       commandId: r.command_id === null ? null : String(r.command_id), what: String(r.what), why: r.why === null ? null : String(r.why),
       inputs: r.inputs_json === null ? null : JSON.parse(String(r.inputs_json)),
     }));
+  }
+
+  // A rule engine's own state, kept beside the command log so a restart knows it (BLAST.md B14: which
+  // trucks the blast engine held, and for which zone). Rewritten whole on each change.
+  putState(name: string, value: unknown, atMs: number): void {
+    this.#q.putState!.run(name, JSON.stringify(value), atMs);
+  }
+
+  getState<T>(name: string): T | undefined {
+    const row = this.#q.getState!.get(name);
+    return row ? (JSON.parse(String(row.json)) as T) : undefined;
   }
 
   // For tests that try to break the append-only rule; product code never calls this.

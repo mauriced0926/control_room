@@ -116,6 +116,7 @@ export function timelineEntry(r: CommandRecord, truck: TruckView | undefined): T
         detail = `Can't verify: ${blindWords}. ${r.failure?.message ?? ''} Check its effect when the data returns.`;
       } else { outcome = 'failed'; detail = r.failure?.message ?? r.summary; }
       break;
+    case 'unverified': outcome = "can't verify"; detail = `${r.summary}. Can't verify: the truck's data is silent or frozen, so the effect is checked when its data returns (BLAST.md B16)`; break;
     case 'refused': outcome = 'refused'; detail = r.failure?.message ?? r.summary; break;
     case 'expired': outcome = 'expired'; detail = r.failure?.message ?? r.summary; break;
     case 'cancelled': outcome = 'cancelled'; break;

@@ -52,7 +52,7 @@ export function clearanceRows(snap: FleetSnapshot, o: { linkDown?: boolean; memo
     const c = verdictOf(z, snap.trucks);
     const last = o.memory?.call(z.zoneId, linkDown ? null : c.verdict, snap.atServerMs) ?? null;
     const verdict: Verdict = linkDown ? 'UNSURE' : c.verdict;
-    const reasons = c.reasons.map((r) => `${r.vehicleIds.join(', ')}: ${r.why}`);
+    const reasons = c.reasons.map((r) => (r.vehicleIds.length ? `${r.vehicleIds.join(', ')}: ${r.why}` : r.why));
     return {
       zoneId: z.zoneId,
       status: z.status ?? 'status unknown',

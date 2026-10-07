@@ -8,6 +8,9 @@
 //      │          │            │
 //      │          └────────────┴──> retried under a new command_id when the deadline passes with
 //      │                            no effect, up to a set number of attempts; then failed
+//      │          └────────────┴──> unverified, when the truck's data is silent or frozen: sent a
+//      │                            bounded number of times, then "can't verify" (BLAST.md B16), and
+//      │                            checked like any other once believable data returns
 //      ├──> refused     the safety gate (or a local rule) said no; never sent
 //      ├──> cancelled   an operator cancelled it while it waited for the link
 //      └──> expired     too old to send after an outage or a restart
@@ -99,8 +102,9 @@ export const ALLOW_ALL_GATE_NO_BLAST_SAFETY: SafetyGate = Object.freeze({
 
 // ---- records ----
 
-export type CommandStatus = 'pending' | 'sent' | 'acknowledged' | 'confirmed' | 'failed' | 'refused' | 'expired' | 'cancelled' | 'superseded';
-export const OPEN_STATUSES: ReadonlySet<CommandStatus> = new Set<CommandStatus>(['pending', 'sent', 'acknowledged']);
+export type CommandStatus = 'pending' | 'sent' | 'acknowledged' | 'unverified' | 'confirmed' | 'failed' | 'refused' | 'expired' | 'cancelled' | 'superseded';
+// 'unverified' stays open: its effect is checked when the truck's data returns (BLAST.md B16).
+export const OPEN_STATUSES: ReadonlySet<CommandStatus> = new Set<CommandStatus>(['pending', 'sent', 'acknowledged', 'unverified']);
 
 export type Role = 'operator' | 'supervisor';
 
@@ -155,6 +159,7 @@ export interface CommandRecord {
   started: { atMs: number; detail: string } | null; // EXIT_ZONE under way
   effect: { atMs: number; serverMs: number; detail: string; ackReceived: boolean } | null;
   pendingRefusal: { code: string; message: string; ourFault: boolean } | null; // a retry refused; waiting to see if an earlier attempt worked
+  unverified?: { sinceMs: number; data: 'silent' | 'frozen'; previous: 'sent' | 'acknowledged' } | null; // B16: can't be confirmed until the data returns
   failure: { code: string; message: string; ourFault: boolean } | null;
   supersededBy: string | null;
   summary: string;
@@ -302,7 +307,7 @@ export class CommandRegistry {
       createdMs: now, createdServerMs: this.#fleet.serverNow(), updatedMs: now, closedServerMs: null,
       status: 'pending', attempts: [], maxAttempts: action === 'ESTOP' ? PARAMS.estopMaxAttempts.value : PARAMS.commandMaxAttempts.value,
       hold: null, deadlineMs: null, queued: null, targetZone: null, baselineState: null, started: null, effect: null,
-      pendingRefusal: null, failure: null, supersededBy: null, summary: '',
+      pendingRefusal: null, unverified: null, failure: null, supersededBy: null, summary: '',
     };
     this.#records.set(rec.id, rec);
     this.#audit(rec, 'submitted', `${action} ${vehicleId} requested`);
@@ -371,6 +376,7 @@ export class CommandRegistry {
     }
     const now = this.#clock.now();
     for (const rec of this.#openSorted()) {
+      if (rec.status === 'unverified') continue; // sent already; waits for believable data, not the link
       if (rec.hold) {
         if (rec.hold.needsReconfirm) continue;
         if (now <= rec.hold.autoSendUntilMs) {
@@ -516,6 +522,15 @@ export class CommandRegistry {
     const now = this.#clock.now();
     for (const rec of this.#openOn(vehicleId)) {
       if (rec.hold || rec.attempts.length === 0) continue;
+      if (rec.status === 'unverified') {
+        if (!this.#fresh(rec, truck)) continue;
+        // B16: believable data again. Checked like any other command, against a fresh deadline.
+        const was = rec.unverified!;
+        rec.status = was.previous;
+        rec.unverified = null;
+        rec.deadlineMs = now + this.#baseDeadline(rec);
+        this.#save(rec, 'data_returned', `${rec.vehicleId}'s data is believable again; checking the ${rec.action}`);
+      }
       const e = this.#effect(rec, truck);
       if (e.done) { this.#confirm(rec, e.detail); continue; }
       if (e.started && !rec.started) {
@@ -633,6 +648,17 @@ export class CommandRegistry {
   // No effect when there should have been one: retry under a new command_id, or fail and alarm.
   #noEffect(rec: CommandRecord, why: string): void {
     const truck = this.#fleet.truck(rec.vehicleId);
+    // B16: with no believable telemetry there is nothing to confirm against. Sent a bounded number of
+    // times (EXIT_ZONE once: it is never sent again blind), then "can't verify", not failed.
+    const blind = truck !== undefined && (truck.confidence === 'silent' || truck.confidence === 'contradicted' || truck.confidence === 'unknown');
+    if (blind && (rec.attempts.length >= rec.maxAttempts || rec.action === 'EXIT_ZONE')) {
+      const data = truck.confidence === 'contradicted' ? 'frozen' : 'silent';
+      rec.unverified = { sinceMs: this.#clock.now(), data, previous: rec.status === 'acknowledged' ? 'acknowledged' : 'sent' };
+      rec.status = 'unverified';
+      rec.deadlineMs = null;
+      this.#save(rec, 'unverified', `${rec.action} ${rec.vehicleId}: can't verify: data ${data} (${why}). Checked when its data returns.`);
+      return;
+    }
     if (rec.action === 'EXIT_ZONE' && rec.started) {
       this.#fail(rec, 'EXIT_NOT_CONFIRMED', `${rec.vehicleId} started leaving ${rec.targetZone ?? 'its zone'} but is not confirmed outside it (${why}). Not sent again: a new EXIT_ZONE could send it out of a different zone.`);
       return;
@@ -860,6 +886,7 @@ export class CommandRegistry {
     rec.deadlineMs = null;
     rec.queued = null;
     rec.pendingRefusal = null;
+    rec.unverified = null;
     rec.closedServerMs = this.#fleet.serverNow();
     this.#save(rec, status, what ?? `${rec.action} ${rec.vehicleId} ${status}${failure ? `: ${failure.message}` : ''}`, actor);
     this.#trim();
@@ -939,6 +966,8 @@ export function summarise(r: CommandRecord, nowMs: number): string {
         return `accepted, queued until ${r.queued.behind} ends${est}${r.queued.behind === 'CHARGING' ? ': no fixed deadline' : ''}${attempt}`;
       }
       return `accepted, not carried out yet${attempt}`;
+    case 'unverified':
+      return `can't verify: data ${r.unverified?.data ?? 'silent'}; sent ${n} time${n === 1 ? '' : 's'}, checked when its data returns`;
     case 'confirmed':
       return `done: ${r.effect?.detail ?? ''}${r.effect && !r.effect.ackReceived ? ' (no ack received)' : ''}${attempt}`;
     case 'failed': case 'refused': case 'expired':

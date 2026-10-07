@@ -11,5 +11,5 @@
     "noUncheckedIndexedAccess": true,
     "types": ["node"]
   },
-  "include": ["src", "test", "fake", "player"]
+  "include": ["src", "test", "fake", "player", "tools"]
 }

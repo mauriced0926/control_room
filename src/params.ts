@@ -78,6 +78,13 @@ export const PARAMS = {
   reconnectVerifyGrace: p(2_500, 'ms', 'decided', 'after a reconnect, a command too old to replay is checked against telemetry for this long (latency 1.5 s plus margin) before it is marked expired'),
 
   // Blast safety and operator attention
+  reverseSpeedLoadedPlanning: p(1.5, 'm/s', 'decided', 'the blast engine plans a loaded reverse at the pessimistic speed TESTING.md L0.P tests (reverseSpeedLoaded is measured over only 2.4 m): a truck we think can clear and can\'t would get no alarm'),
+  dutyStopBeforeEnd: p(0.05, 'm', 'measured', 'trucks load and dump at offset 59.95 of a 60 m segment (fixtures): the stop is inside the segment, short of its end'),
+  blastExitMargin: p(5_000, 'ms', 'decided', 'BLAST.md "with the margin": a predicted exit must beat effective_at by this much to count, and an evacuation predicted to finish later than this before it raises the can\'t-clear alarm. Covers the 1-6 s delay being drawn late and telemetry describing the truck late'),
+  blastHoldMarginM: p(10, 'm', 'decided', 'BLAST.md B6: added to the hold distance (6 s + age + latency) x speed. 10 m is 3.3 s at 3 m/s'),
+  blastEvalInterval: p(500, 'ms', 'decided', 'the engine re-evaluates every truck at least this often while a zone is not open or it holds a truck (last safe moments, silence, alarms), and also at once on every zone event, reconnect, confidence change and telemetry. A last safe moment is acted on one interval early; 0.5 s is small against the 10 s alarm budget and the 1-6 s command delay'),
+  b6aTakeBeforeWorkEnds: p(8_000, 'ms', 'decided', 'BLAST.md B6a: take control this long before loading or dumping is due to end. TAKE_CONTROL acts on receipt (acked in 0.16-0.68 s live), and the work may have started up to 1.5 s before we saw it; 8 s leaves 5 s spare. Charging has no known end (the rate is guessed), so a charging truck is taken at once'),
+  blastCommandCooldown: p(8_000, 'ms', 'decided', 'after a system command fails for good (the registry has retried it), the engine decides again no sooner than one confirmation deadline later, so a truck that ignores commands is not flooded'),
   cantClearAlarmWithin: p(10_000, 'ms', 'decided', 'CLAUDE.md invariant 5; TESTING.md L4.R1'),
   autoResumeWithin: p(15_000, 'ms', 'decided', 'TESTING.md L4.R3: command delay plus one retry, with margin'),
   estopAutoSendWithin: p(10_000, 'ms', 'decided', 'TESTING.md L7.8: a pending e-stop is sent on reconnect only within 10 s'),

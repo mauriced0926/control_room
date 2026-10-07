@@ -408,3 +408,26 @@ test('L8.4 through the hub: "who moved HT-03 then?" is one request, answered fro
     assert.equal(d.say({ type: 'history', vehicleId: 'HT-03', atServerMs: at, windowMs: 1e12 }).ok, false);
   } finally { h.done(); }
 });
+
+test('the frame carries the engine\'s clearance per zone not open, its last call made with the link up, and its open alarms', async () => {
+  const { blastRig } = await import('./helpers/blast-rig.ts');
+  const r = blastRig({ seed: 7, blasts: [{ zoneId: 'DECLINE', atMs: 10_000, closedForMs: 60_000 }], faults: { linkDrops: [{ atMs: 20_000, durationMs: 30_000 }] } });
+  const sessions = new Sessions(r.clock);
+  const hub = new LiveHub({ clock: r.clock, fleet: r.fleet, link: r.link, registry: r.registry, sessions, log: () => {}, blast: r.engine });
+  try {
+    r.advance(12_000);
+    const sock = new FakeSocket();
+    hub.connect(sock, sessions.create(PRIYA));
+    const up = sock.frames().at(-1)!.body.frame.live;
+    assert.deepEqual(up.blastClearance.map((c: any) => c.zoneId), ['DECLINE']);
+    assert.ok(up.blastClearance[0].lastWhileUp, 'the call is recorded with its time');
+    assert.ok(up.blastHolds.length > 0 && up.blastHolds.every((h: any) => h.zones.includes('DECLINE')), 'which trucks the engine holds, and for which zone');
+    r.advance(15_000); // the link is down from 20 s; past the 5 s watchdog
+    hub.tick();
+    const down = sock.frames().at(-1)!.body.frame.live;
+    assert.equal(down.blastClearance[0].verdict, 'UNSURE');
+    assert.ok(down.blastClearance[0].lastWhileUp.atServerMs <= r.fleet.serverNow() - 5_000, 'its last call made with the link up, and when');
+    assert.ok(down.blastAlarms.some((a: any) => a.kind === 'link_down_in_blast' && a.source === 'blast'), 'open alarms, in the shared shape');
+    assert.equal(down.blastSafety.active, false, 'not claimed until the safety gate is the engine\'s');
+  } finally { hub.shutdown(); r.cleanup(); }
+});

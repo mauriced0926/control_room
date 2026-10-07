@@ -13,8 +13,10 @@
 // gateway; the registry and the relay do.
 //
 // Time is the injected clock.
+import type { AlarmRaise } from './alarms.ts';
 import { Alerting, ENDS_ON_ACK } from './alerting.ts';
 import { AlarmStore, type AlarmItem, type Person, type StoreEvent } from './attention.ts';
+import type { BlastEngine, BlastHold, ZoneClearanceView } from './blast.ts';
 import type { Clock, TimerHandle } from './clock.ts';
 import type { DriveRelay, DriveView } from './drive.ts';
 import type { FleetSnapshot, FleetState } from './fleet.ts';
@@ -59,7 +61,10 @@ export interface WhoView { id: string; name: string; role: User['role']; screens
 
 export interface LiveState {
   link: { state: LinkStatus['state']; reason: string; forMs: number; failures: number; nextAttemptInMs: number | null; authError: string | null };
-  blastSafety: { active: false; note: string };
+  blastSafety: { active: boolean; note: string };
+  blastClearance: ZoneClearanceView[]; // the engine's own view per zone not open, with the last call made with the link up (B11, B13)
+  blastAlarms: AlarmRaise[];      // the engine's open can't-clear and link-down alarms (src/alarms.ts shape)
+  blastHolds: BlastHold[];        // trucks the engine holds, for which zones and rules: "held for the blast in X"
   who: WhoView[];
   leases: Array<{ vehicleId: string; operatorId: string; sinceServerMs: number }>;
   commands: CommandView[];
@@ -75,6 +80,7 @@ export interface LiveState {
 export interface TruckDetail { vehicleId: string; commands: CommandRecord[]; note: TruckNote }
 
 export const BLAST_SAFETY_OFF = 'Blast safety is NOT active in this build: nothing stops a truck being sent into a closing zone, and no truck is evacuated automatically.';
+export const BLAST_SAFETY_ON = 'Blast safety is active: the blast engine evacuates and holds trucks for closing zones, and checks every command.';
 
 export const MAX_SCREENS_PER_SESSION = 8;
 const DETAIL_COMMANDS = 20;
@@ -114,6 +120,8 @@ export interface LiveOptions {
   provisionalBlast?: () => boolean;     // the provisional can't-clear alarm; false once the blast engine raises its own
   verdict?: VerdictFn;                  // the clearance verdict; the blast engine's once it is wired in
   drive?: DriveRelay;                   // absent: drive input is refused and nothing is sent
+  blast?: Pick<BlastEngine, 'clearances' | 'openAlarms' | 'holds' | 'subscribe'>;
+  blastSafetyActive?: boolean; // true only when the registry's safety gate is the blast engine's
 }
 
 export class LiveHub {
@@ -146,6 +154,14 @@ export class LiveHub {
     this.#unsub.push(() => this.#alerting.stop());
     this.#unsub.push(this.attention.subscribe((e) => this.#attentionEvent(e)));
     this.#unsub.push(o.registry.subscribe((e) => this.#registryEvent(e)));
+    if (o.blast) {
+      this.#unsub.push(o.blast.subscribe((e) => {
+        this.#dirty = true;
+        // The engine's can't-clear and link-down alarms go into the attention tray (src/alarms.ts shape).
+        if (e.type === 'raise' || e.type === 'clear') this.attention.apply(e);
+        else if (e.type === 'notify') this.#registryEvent({ type: 'notify', to: e.to, vehicleId: e.vehicleId, recordId: null, message: e.message });
+      }));
+    }
     this.#unsub.push(o.sessions.onEnd((s) => this.closeSession(s.id, 'session ended')));
   }
 
@@ -235,8 +251,9 @@ export class LiveHub {
     return this.#who().map((w) => ({ id: w.id, name: w.name, role: w.role }));
   }
 
-  state(): LiveState {
+  state(snap?: FleetSnapshot): LiveState {
     const now = this.#o.clock.now();
+    const active = this.#o.blastSafetyActive === true;
     const st = this.#o.link.status();
     const reg = this.#o.registry;
     return {
@@ -244,7 +261,10 @@ export class LiveHub {
         state: st.state, reason: st.reason, forMs: now - st.sinceMs, failures: st.failures,
         nextAttemptInMs: st.nextAttemptAtMs === null ? null : Math.max(0, st.nextAttemptAtMs - now), authError: st.authError,
       },
-      blastSafety: { active: false, note: BLAST_SAFETY_OFF },
+      blastSafety: { active, note: active ? BLAST_SAFETY_ON : BLAST_SAFETY_OFF },
+      blastClearance: this.#o.blast ? this.#o.blast.clearances(snap ?? this.#o.fleet.snapshot()) : [],
+      blastAlarms: this.#o.blast ? this.#o.blast.openAlarms() : [],
+      blastHolds: this.#o.blast ? this.#o.blast.holds() : [],
       who: this.#who(),
       leases: reg.leases().map((l) => ({ vehicleId: l.vehicleId, operatorId: l.operatorId, sinceServerMs: l.sinceServerMs })),
       commands: this.#commands(now),
@@ -265,7 +285,8 @@ export class LiveHub {
       this.#lastSent = this.#o.clock.now();
     }
     const site = this.#o.fleet.site;
-    const frame = { site: site ? siteData(site) : null, snapshot: this.#o.fleet.snapshot(), live: this.state() };
+    const snapshot = this.#o.fleet.snapshot();
+    const frame = { site: site ? siteData(site) : null, snapshot, live: this.state(snapshot) };
     return JSON.stringify({ seq: ++this.#seq, sentServerMs: this.#o.fleet.serverNow(), frame });
   }
 

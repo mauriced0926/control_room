@@ -1,0 +1,1 @@
+# L4 seeds that failed, one JSON object per line: {"seed","version","site","frozenStationary"?,"rule","note"}. Run by test/l4.slow.ts.

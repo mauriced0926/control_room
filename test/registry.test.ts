@@ -248,8 +248,8 @@ test('L2.37 accepted, no effect by the deadline: retried under a new command_id 
       const cid = r.sent[i]!.command_id;
       ids.push(cid);
       r.ack(cid, 'ACCEPTED');
-      r.advance(DEADLINE - 200);
-      r.tel(V, HOLDING);
+      // Reporting all along (a truck that went silent would be "can't verify" instead: B16).
+      for (let t = 0; t < DEADLINE - 200; t += 1_000) { r.advance(Math.min(1_000, DEADLINE - 200 - t)); r.tel(V, HOLDING); }
       assert.equal(r.sent.length, i + 1, `no retry before the deadline (attempt ${i + 1})`);
       r.advance(300);
     }
@@ -329,10 +329,64 @@ test('an EXIT_ZONE under way that is not confirmed outside is failed, never sent
     r.tel(V, { offset_m: 97, direction: 'REV', task: 'EXIT_ZONE' });
     const rec = r.registry.get(a.id)!;
     assert.match(rec.summary, /under way: leaving DECLINE/);
-    r.advance(10 * 60_000, 1_000); // goes silent
+    // Still reporting, still inside, long past its deadline: failed.
+    for (let i = 0; i < 150; i++) { r.advance(1_000); r.tel(V, { offset_m: 97, direction: 'REV', task: 'EXIT_ZONE', speed_mps: 0.1 }); }
     assert.equal(r.registry.get(a.id)!.status, 'failed');
     assert.equal(r.registry.get(a.id)!.failure!.code, 'EXIT_NOT_CONFIRMED');
     assert.equal(r.sent.length, 1);
+  } finally { r.cleanup(); }
+});
+
+test('L2.59 (B16) an EXIT_ZONE under way whose truck goes silent is "can\'t verify: data silent", not failed, and is never sent again blind', () => {
+  const r = regRig();
+  try {
+    r.tel(V, { offset_m: 100 });
+    const a = r.registry.submit({ vehicleId: V, action: 'EXIT_ZONE' }, BLAST);
+    r.ack(r.sent[0]!.command_id, 'ACCEPTED');
+    r.advance(2_000);
+    r.tel(V, { offset_m: 97, direction: 'REV', task: 'EXIT_ZONE' });
+    r.advance(10 * 60_000, 1_000); // goes silent
+    const rec = r.registry.get(a.id)!;
+    assert.equal(rec.status, 'unverified');
+    assert.match(rec.summary, /can't verify: data silent/);
+    assert.equal(r.sent.length, 1);
+    assert.ok(!r.events.some((e) => e.type === 'alarm' && e.recordId === a.id), 'not reported as failed');
+    // The data returns: holding outside the zone. Checked like any other, and confirmed.
+    r.tel(V, { state: 'HOLDING', speed_mps: 0, segment_id: 'SEG-BAY', zone_id: 'BAY', offset_m: 78 });
+    assert.equal(r.registry.get(a.id)!.status, 'confirmed');
+  } finally { r.cleanup(); }
+});
+
+test('L2.59 (B16) a HOLD to a silent truck is sent a bounded number of times, then "can\'t verify"; when the data returns without the effect it is retried as normal', () => {
+  const r = regRig();
+  try {
+    r.tel(V, { offset_m: 100 });
+    r.advance(PARAMS.truckSilentAfter.value + 100);
+    assert.equal(r.fleet.truck(V)!.confidence, 'silent');
+    const a = r.registry.submit({ vehicleId: V, action: 'HOLD' }, BLAST);
+    r.advance(PARAMS.commandMaxAttempts.value * DEADLINE + 1_000);
+    assert.equal(r.sent.length, PARAMS.commandMaxAttempts.value, 'bounded');
+    assert.equal(r.registry.get(a.id)!.status, 'unverified');
+    r.advance(60_000);
+    assert.equal(r.sent.length, PARAMS.commandMaxAttempts.value, 'nothing more while silent');
+    assert.equal(r.store.command(a.id)!.status, 'unverified', 'in the log as unverified');
+    r.tel(V, { offset_m: 160 }); // back, still moving: no effect
+    assert.equal(r.registry.get(a.id)!.status, 'sent');
+    for (let t = 0; t < DEADLINE + 200; t += 1_000) { r.advance(1_000); r.tel(V, { offset_m: 160 + t / 300 }); }
+    assert.equal(r.registry.get(a.id)!.status, 'failed', 'its attempts were used: failed, with the alarm');
+    assert.ok(r.events.some((e) => e.type === 'alarm' && e.recordId === a.id));
+  } finally { r.cleanup(); }
+});
+
+test('L2.59 (B16) a command to a frozen truck says "data frozen"', () => {
+  const r = regRig();
+  try {
+    for (let i = 0; i < 25; i++) { r.tel(V, { offset_m: 100 }); r.advance(200); }
+    assert.equal(r.fleet.truck(V)!.confidence, 'contradicted');
+    const a = r.registry.submit({ vehicleId: V, action: 'HOLD' }, BLAST);
+    for (let i = 0; i < 4 * DEADLINE / 200; i++) { r.tel(V, { offset_m: 100 }); r.advance(200); }
+    assert.equal(r.registry.get(a.id)!.status, 'unverified');
+    assert.match(r.registry.get(a.id)!.summary, /can't verify: data frozen/);
   } finally { r.cleanup(); }
 });
 
