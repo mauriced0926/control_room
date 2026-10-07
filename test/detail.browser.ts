@@ -299,3 +299,21 @@ test('a real click on a fleet row opens the truck even when frames arrive betwee
   await page.mouse.move(5, 5);
   await page.click('#detail-close');
 });
+
+// Last in the file: it really e-stops a truck on the shared site. The e-stop must never lose a press to
+// a redraw: a real press held across several frames, then released, still sends it, from the same
+// button element throughout.
+test('a real press on a header e-stop, held across frames, still sends the e-stop (the button is kept, not redrawn)', { skip, timeout: 30_000 }, async () => {
+  if (await page.$('#detail:not([hidden])')) await page.click('#detail-close');
+  const truck = CLEAN.filter((v) => v !== INSIDE).at(-1)!;
+  const button = `#estop-trucks button[data-truck="${truck}"]`;
+  const box = (await (await page.$(button))!.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.$eval(button, (e) => { (e as HTMLElement).dataset.mark = 'pressed'; });
+  await page.mouse.down();
+  await page.waitForTimeout(800); // three frames or more at 4 a second
+  await page.mouse.up();
+  assert.equal(await page.$eval(button, (e) => (e as HTMLElement).dataset.mark), 'pressed', 'the same button element throughout');
+  await page.waitForFunction((t) => (document.getElementById('estop-note')?.textContent ?? '').includes(`E-stop ${t}`), truck, { timeout: 5_000 });
+  await page.mouse.move(5, 5);
+});
