@@ -335,3 +335,40 @@ p.bad { color: #ffd6d6; font-weight: 700; }
    push the row under the pointer down. A cut row is marked; its detail has everything. */
 #rows.frozen .cell { max-height: var(--h); overflow: hidden; }
 #rows tr.clipped td.id .cell::after { content: "more ⋯"; display: block; font: 600 11px var(--font); color: var(--unsure); }
+
+/* ---- driving (UI.md screen 3) ---- */
+.drive-panel { margin: 10px 0; padding: 12px 14px; border: 2px solid var(--truck); border-radius: 8px; background: var(--panel-2); }
+.drive-head { font-size: 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.drive-head b { white-space: nowrap; }
+.drive-sending { font-size: 14px; font-weight: 700; padding: 1px 8px; border-radius: 4px; border: 1px solid var(--line); }
+.drive-sending[data-on="true"] { color: var(--clear); border-color: var(--clear); }
+.drive-sending[data-on="false"] { color: var(--closing); border-color: var(--closing); }
+.drive-keys { font-size: 15px; margin: 6px 0; line-height: 1.8; }
+kbd { font-family: var(--mono); background: var(--panel); border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 4px; padding: 0 6px; }
+.drive-steps button { padding: 2px 9px; margin-right: 4px; }
+.drive-steps button[aria-pressed="true"] { background: var(--truck-fill); border-color: var(--truck); color: #fff; }
+.drive-refusal { margin: 8px 0; padding: 8px 10px; border: 2px solid var(--notclear); border-radius: 6px; font-weight: 700; font-size: 16px; }
+.drive-warning { margin: 8px 0; padding: 6px 10px; border: 1px dashed var(--closing); border-radius: 6px; color: #ffe2a0; }
+.drive-deadman { font-size: 17px; font-weight: 600; margin: 8px 0; }
+.drive-deadman[data-level="ok"]::before, .meter[data-level="ok"] .val::before { content: "● "; color: var(--clear); }
+.drive-deadman[data-level="warn"]::before, .meter[data-level="warn"] .val::before { content: "▲ "; color: var(--closing); }
+.drive-deadman[data-level="bad"]::before, .meter[data-level="bad"] .val::before { content: "■ "; color: var(--notclear); }
+.meter { display: grid; grid-template-columns: 90px 1fr; gap: 2px 10px; align-items: center; margin: 6px 0; }
+.meter .label { font-weight: 700; }
+.meter .bar { position: relative; height: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
+.meter .fill { height: 100%; width: 0; background: var(--clear); }
+.meter[data-level="warn"] .fill { background: var(--closing); }
+.meter[data-level="bad"] .fill { background: var(--notclear); }
+.meter .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text); left: 50%; }
+.meter .val { grid-column: 2; font-size: 13px; color: var(--muted); }
+.meter-key { font-size: 12px; color: var(--dim); margin: 0 0 6px; }
+.drive-facts { display: grid; grid-template-columns: 90px 1fr; gap: 3px 10px; margin: 8px 0; font-size: 16px; }
+.drive-facts dt { color: var(--muted); }
+.drive-facts dd { margin: 0; }
+.drive-facts dd[data-level="warn"] { color: #ffe2a0; font-weight: 700; }
+.drive-facts dd[data-level="bad"] { color: #ffd6d6; font-weight: 700; }
+.drive-limit { margin: 6px 0; font-weight: 700; color: #ffe2a0; }
+.drive-done { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
+.callout.lost { border-color: var(--notclear); font-weight: 600; }
+.drawer button.drive-estop { margin-left: auto; flex: 0 0 auto; width: 56px; height: 56px; padding: 0; border: 0; border-radius: 0; color: #fff; font-size: 13px; font-weight: 800; cursor: pointer; background: var(--notclear);
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%); }

@@ -1,7 +1,7 @@
 // Task 6b end to end: the real service process (`node src/main.ts`) against the fake gateway's live
 // day over TLS on 127.0.0.1. Claims are checked against raw data: the lines the gateway received, the
 // service's own output, and its SQLite file. Never the real gateway.
-// Cases: L13.1 (outside Docker), L6.4, L8.3, L8.2, L8.6, L6.5, L6.3's drive half, L7.8 through the
+// Cases: L13.1 (outside Docker), L6.4, L8.3, L8.2, L8.6, L6.5, L6.3's drive half (no lease, nothing sent), L7.8 through the
 // server, and log hygiene.
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -167,14 +167,17 @@ test('end to end: L8.6 against the running service; hostile browsers (L6.5) and 
   await hostile.opened;
   const before = site.commands().length;
   for (const m of ['nonsense', '[]', '{"type":"command","action":"HOLD","vehicleId":{"$gt":""}}', '{"type":"command","action":"ESTOP","vehicleId":"HT-99"}',
-    '{"__proto__":{"admin":true},"type":"command","action":"RESUME"}', '{"type":"drive","vehicleId":"HT-01","lease_id":"L-1","seq":1,"throttle":1}']) {
+    '{"__proto__":{"admin":true},"type":"command","action":"RESUME"}', '{"type":"drive","vehicleId":"HT-01","lease_id":"L-1","seq":1,"throttle":1}',
+    '{"type":"drive","vehicleId":"HT-01","throttle":1,"n":1}']) {
     hostile.send(m);
     await new Promise((r) => setTimeout(r, 120));
   }
   hostile.ws.send(Buffer.from([1, 2, 3]), { binary: true });
-  await waitFor(() => hostile.results().length >= 7, 5_000, 'seven refusals');
+  await waitFor(() => hostile.results().length >= 8, 5_000, 'eight refusals');
   assert.ok(hostile.results().every((r) => r.ok === false), JSON.stringify(hostile.results()));
-  assert.match(hostile.results().find((r) => /Driving/.test(r.error))!.error, /not available in this build yet/);
+  // Drive input that isn't well formed, or from someone without the truck's lease, goes nowhere.
+  assert.ok(hostile.results().some((r) => /^n must be a whole number/.test(r.error)), 'a drive message without its input counter');
+  assert.ok(hostile.results().some((r) => r.drive?.code === 'NO_LEASE' && /You don't have control of HT-01\. Nothing was sent to the truck\./.test(r.error)), 'drive input without the lease');
   // A frame over the size limit: ws closes that connection (1009), and only that one.
   hostile.ws.send('{"type":"command","why":"' + 'x'.repeat(10_000) + '"}');
   await waitFor(() => hostile.closeCode !== null, 5_000, 'the oversized frame to close the socket');

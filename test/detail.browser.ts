@@ -60,7 +60,8 @@ async function shot(p: Page, name: string, selector?: string): Promise<void> {
 // so a click at a row's screen position can land on another truck by the time it arrives.
 async function openRow(p: Page, truck: string): Promise<void> {
   await p.$eval(`#rows tr[data-truck="${truck}"] td.id`, (td) => (td as HTMLElement).click());
-  await p.waitForFunction((t) => document.getElementById('detail-title')?.textContent === t && !document.getElementById('detail')!.hidden, truck, { timeout: 5_000 });
+  await p.waitForFunction((t) => document.getElementById('detail-title')?.textContent === t && !document.getElementById('detail')!.hidden, truck, { timeout: 5_000 })
+    .catch(async (e) => { throw new Error(`${e.message}; page: ${JSON.stringify(await p.evaluate(() => ({ title: document.getElementById('detail-title')?.textContent, hidden: document.getElementById('detail')!.hidden, hash: location.hash, service: document.getElementById('service-link')?.textContent, summary: document.getElementById('detail-summary')?.textContent, timeline: document.getElementById('detail-timeline')?.textContent?.slice(0, 200), active: document.activeElement?.id })))}`); });
 }
 
 const audit = () => {
@@ -92,6 +93,12 @@ before(async () => {
   martaCtx = await browser.newContext({ viewport: { width: 1600, height: 1100 } });
   page = await priyaCtx.newPage();
   marta = await martaCtx.newPage();
+  for (const [who, p] of [['priya', page], ['marta', marta]] as const) {
+    p.on('pageerror', (e) => console.log(`PAGEERROR (${who}): ${e.message}\n${e.stack ?? ''}`));
+    p.on('framenavigated', (f) => { if (f === p.mainFrame()) console.log(`NAV (${who}) ${Date.now()} ${f.url()}`); });
+    p.on('websocket', (ws) => { console.log(`WSOPEN (${who}) ${Date.now()}`); ws.on('close', () => console.log(`WSCLOSE (${who}) ${Date.now()}`)); });
+    p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log(`CONSOLE ${m.type()} (${who}): ${m.text()}`); });
+  }
   await login(page, 'priya');
   await login(marta, 'marta');
 });
@@ -167,7 +174,7 @@ test('L8.1 a command blocked by a lease is shown to the lease holder as well as 
   await openRow(marta, truck);
   await marta.waitForSelector('#detail:not([hidden])');
   await marta.click('#detail-buttons button[data-action="TAKE_CONTROL"]');
-  await marta.waitForFunction(() => /You have control/.test(document.getElementById('detail-callout')!.textContent!), null, { timeout: 10_000 });
+  await marta.waitForFunction(() => /^You are driving /.test(document.getElementById('drive-headline')!.textContent!) && !document.getElementById('drive-panel')!.hidden, null, { timeout: 10_000 });
 
   await openRow(page, truck);
   await page.waitForFunction(() => /marta is driving/.test(document.getElementById('detail-callout')!.textContent!), null, { timeout: 5_000 });
@@ -236,6 +243,7 @@ test('the fleet table keeps its order under the pointer: a re-sort waits, conten
   await page.waitForSelector('#order-paused:not([hidden])', { timeout: 2_000 });
   const frozen = await order();
   const box = (await (await page.$(`#rows tr[data-truck="${under}"] td.id`))!.boundingBox())!;
+  assert.ok(box, `no box for ${under}: ${JSON.stringify(await page.evaluate((u) => ({ url: location.href, rows: document.querySelectorAll('#rows tr').length, row: !!document.querySelector(`#rows tr[data-truck="${u}"]`), connected: document.querySelector(`#rows tr[data-truck="${u}"]`)?.isConnected, drawer: !document.getElementById('detail')!.hidden, audit: !document.getElementById('audit')!.hidden, scrollY, body: document.body.className }), under))}`);
 
   await marta.click(`#estop-trucks button[data-truck="${stopped}"]`);
   await page.waitForFunction((t) => /ESTOPPED/.test(document.querySelector(`#rows tr[data-truck="${t}"]`)?.textContent ?? ''), stopped, { timeout: 15_000 });
@@ -274,4 +282,38 @@ test('the clearance panel during a link drop: UNSURE in full colour, the last ca
   await site.listen();
   await page.waitForFunction((s) => document.querySelector<HTMLElement>(s)?.dataset.verdict === 'NOT_CLEAR', zrow, { timeout: 20_000 });
   assert.equal(await page.$(`${zrow} .was`), null);
+});
+
+test('a real click on a fleet row opens the truck even when frames arrive between press and release (the cells are kept, not redrawn)', { skip, timeout: 30_000 }, async () => {
+  if (await page.$('#detail:not([hidden])')) await page.click('#detail-close');
+  const truck = CLEAN.find((v) => v !== INSIDE)!;
+  const cell = `#rows tr[data-truck="${truck}"] td.id .cell`;
+  const box = (await (await page.$(cell))!.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.$eval(cell, (e) => { (e as HTMLElement).dataset.mark = 'pressed'; });
+  await page.mouse.down();
+  await page.waitForTimeout(800); // three frames or more at 4 a second
+  await page.mouse.up();
+  assert.equal(await page.$eval(cell, (e) => (e as HTMLElement).dataset.mark), 'pressed', 'the same cell element throughout');
+  await page.waitForFunction((t) => document.getElementById('detail-title')?.textContent === t && !document.getElementById('detail')!.hidden, truck, { timeout: 5_000 });
+  await page.mouse.move(5, 5);
+  await page.click('#detail-close');
+});
+
+// Last in the file: it really e-stops a truck on the shared site. The e-stop must never lose a press to
+// a redraw: a real press held across several frames, then released, still sends it, from the same
+// button element throughout.
+test('a real press on a header e-stop, held across frames, still sends the e-stop (the button is kept, not redrawn)', { skip, timeout: 30_000 }, async () => {
+  if (await page.$('#detail:not([hidden])')) await page.click('#detail-close');
+  const truck = CLEAN.filter((v) => v !== INSIDE).at(-1)!;
+  const button = `#estop-trucks button[data-truck="${truck}"]`;
+  const box = (await (await page.$(button))!.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.$eval(button, (e) => { (e as HTMLElement).dataset.mark = 'pressed'; });
+  await page.mouse.down();
+  await page.waitForTimeout(800); // three frames or more at 4 a second
+  await page.mouse.up();
+  assert.equal(await page.$eval(button, (e) => (e as HTMLElement).dataset.mark), 'pressed', 'the same button element throughout');
+  await page.waitForFunction((t) => (document.getElementById('estop-note')?.textContent ?? '').includes(`E-stop ${t}`), truck, { timeout: 5_000 });
+  await page.mouse.move(5, 5);
 });

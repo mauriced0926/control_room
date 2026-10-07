@@ -8,13 +8,15 @@
 //
 // In: commands. A message names an action and a truck; who sent it comes from the server's session,
 // never from the message (L8.3). Anything malformed, hostile or too frequent is refused with a
-// reason and logged, and never reaches the registry (L6.5). Drive messages are refused: the driving
-// task adds the relay. Nothing here talks to the gateway; the registry does.
+// reason and logged, and never reaches the registry (L6.5). Drive input goes to the drive relay
+// (src/drive.ts), on its own rate limit: a screen streams it at 10 Hz. Nothing here talks to the
+// gateway; the registry and the relay do.
 //
 // Time is the injected clock.
 import { Alerting, ENDS_ON_ACK } from './alerting.ts';
 import { AlarmStore, type AlarmItem, type Person, type StoreEvent } from './attention.ts';
 import type { Clock, TimerHandle } from './clock.ts';
+import type { DriveRelay, DriveView } from './drive.ts';
 import type { FleetSnapshot, FleetState } from './fleet.ts';
 import type { GatewayLink, LinkStatus } from './link.ts';
 import { PARAMS } from './params.ts';
@@ -65,6 +67,8 @@ export interface LiveState {
   clearance: ClearanceRow[];              // the zone clearance panel, UNSURE while the site link is down
   held: Record<string, HeldBy>;           // who left each holding truck there (L7.9)
   restarts: Record<string, number>;       // each truck's latest controller restart, server ms
+  drives: DriveView[];                    // every lease, with the relay's lag figures (UI.md screen 3)
+  leaseEnds: Record<string, LeaseEnd>;    // how each truck's last lease ended: released, expired, taken over (L7.3)
 }
 
 // What one screen gets for the truck it has open (UI.md screen 2).
@@ -93,6 +97,10 @@ interface Client {
   overLimit: number;
   closed: boolean;
   watch: string | null; // the truck whose detail this screen has open
+  id: string;           // this screen, for the drive relay: one screen drives a lease
+  driveTokens: number;
+  driveTokensAt: number;
+  driveDrops: { windowAt: number; n: number };
 }
 
 export interface LiveOptions {
@@ -105,6 +113,7 @@ export interface LiveOptions {
   store?: Store;                        // the audit log: alarm acknowledgements go in it, and the audit view reads it
   provisionalBlast?: () => boolean;     // the provisional can't-clear alarm; false once the blast engine raises its own
   verdict?: VerdictFn;                  // the clearance verdict; the blast engine's once it is wired in
+  drive?: DriveRelay;                   // absent: drive input is refused and nothing is sent
 }
 
 export class LiveHub {
@@ -118,6 +127,7 @@ export class LiveHub {
   #clearance: ClearanceRow[] | null = null;
   readonly #notices = new Map<string, Notice[]>();
   #nextId = 1;
+  #screens = 0;
   #seq = 0;
   #dirty = true;
   #lastSent = Number.NEGATIVE_INFINITY;
@@ -168,7 +178,11 @@ export class LiveHub {
 
   // A browser has connected with a session the HTTP layer has already checked.
   connect(sock: LiveSocket, session: Session): { receive(data: unknown, isBinary: boolean): void; closed(): void } {
-    const c: Client = { sock, session, tokens: this.#burst(), tokensAt: this.#o.clock.now(), refusals: 0, overLimit: 0, closed: false, watch: null };
+    const now = this.#o.clock.now();
+    const c: Client = {
+      sock, session, tokens: this.#burst(), tokensAt: now, refusals: 0, overLimit: 0, closed: false, watch: null,
+      id: `screen-${++this.#screens}`, driveTokens: PARAMS.browserDriveMessagesPerSecond.value, driveTokensAt: now, driveDrops: { windowAt: now, n: 0 },
+    };
     this.#clients.add(c);
     this.#o.log(`browser connected: ${session.user.id} (${session.user.role}); ${this.#clients.size} open`);
     this.#push(c, this.#sharedFrame(false)); // its first picture at once
@@ -238,6 +252,8 @@ export class LiveHub {
       clearance: this.#clearance ?? this.#clearanceOf(this.#o.fleet.snapshot()),
       held: this.#held(),
       restarts: Object.fromEntries(Object.entries(this.notes.all()).flatMap(([v, n]) => (n.restarts[0] ? [[v, n.restarts[0].atServerMs]] : []))),
+      drives: this.#o.drive?.views() ?? [],
+      leaseEnds: Object.fromEntries(this.#leaseEnds),
     };
   }
 
@@ -354,17 +370,21 @@ export class LiveHub {
     try {
       this.#o.sessions.touch(c.session.id);
       if (!this.#o.sessions.get(c.session.id)) { this.#drop(c, 4401, 'session ended'); return; }
-      if (!this.#take(c)) {
+      // Drive input is streamed at 10 Hz, so it has its own limit (#driveInput); everything else,
+      // including anything malformed, spends from the general one first.
+      const text = !isBinary && typeof data === 'string' ? data : !isBinary && Buffer.isBuffer(data) ? data.toString('utf8') : null;
+      let m: unknown = undefined;
+      if (text !== null && Buffer.byteLength(text, 'utf8') <= MAX_TEXT) { try { m = JSON.parse(text); } catch { /* refused below */ } }
+      const isDrive = m !== null && typeof m === 'object' && !Array.isArray(m) && (m as Incoming).type === 'drive';
+      if (!isDrive && !this.#take(c)) {
         // A flood: refused, and the socket closed if it keeps on.
         if (++c.overLimit >= REFUSALS_BEFORE_CLOSE) { this.#o.log(`closing ${c.session.user.id}'s connection: ${c.overLimit} messages over the limit`); this.#drop(c, 1008, 'too many messages'); return; }
         this.#refuse(c, null, 'too many messages: slow down');
         return;
       }
       if (isBinary) { this.#refuse(c, null, 'binary messages are not accepted'); return; }
-      const text = typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : null;
       if (text === null || Buffer.byteLength(text, 'utf8') > MAX_TEXT) { this.#refuse(c, null, 'message too large or not text'); return; }
-      let m: unknown;
-      try { m = JSON.parse(text); } catch { this.#refuse(c, null, 'not JSON'); return; }
+      if (m === undefined) { this.#refuse(c, null, 'not JSON'); return; }
       if (m === null || typeof m !== 'object' || Array.isArray(m)) { this.#refuse(c, null, 'not a JSON object'); return; }
       const msg = m as Incoming;
       const ref = typeof msg.ref === 'string' && /^[\w-]{1,64}$/.test(msg.ref) ? msg.ref : null;
@@ -374,11 +394,7 @@ export class LiveHub {
         case 'ack': this.#ack(c, ref, msg); break;
         case 'watch': this.#watch(c, ref, msg); break;
         case 'history': this.#history(c, ref, msg); break;
-        case 'drive':
-          // No drive path yet (L6.3's drive half waits for the driving task). Refused, and nothing is
-          // sent to the gateway: the truck's deadman stops it.
-          this.#refuse(c, ref, 'Driving from the browser is not available in this build yet. Nothing was sent to the truck.');
-          break;
+        case 'drive': this.#driveInput(c, ref, msg); break;
         default: this.#refuse(c, ref, `unknown message type ${JSON.stringify(String(msg.type)).slice(0, 40)}`);
       }
     } catch (e) {
@@ -461,6 +477,31 @@ export class LiveHub {
     const rows = this.#o.store.history(v, at - w, at + w);
     const lines: AuditLine[] = auditLines(rows.slice(-HISTORY_MAX_ROWS), at);
     this.#reply(c, ref, { ok: true, history: { vehicleId: v, atServerMs: at, windowMs: w, lines, truncated: rows.length > HISTORY_MAX_ROWS } });
+  }
+
+  // One input, relayed at once or not at all (CLAUDE.md invariant 3). The operator is the session's.
+  // A reply goes back only when the input did not go out as asked, so a screen streaming at 10 Hz
+  // isn't sent ten answers a second.
+  #driveInput(c: Client, ref: string | null, m: Incoming): void {
+    const now = this.#o.clock.now();
+    const rate = PARAMS.browserDriveMessagesPerSecond.value;
+    c.driveTokens = Math.min(rate, c.driveTokens + ((now - c.driveTokensAt) / 1000) * rate);
+    c.driveTokensAt = now;
+    if (c.driveTokens < 1) {
+      // Dropped without a reply. A screen over the limit for a whole second is not a person driving.
+      if (now - c.driveDrops.windowAt > 1_000) c.driveDrops = { windowAt: now, n: 0 };
+      if (++c.driveDrops.n > rate) { this.#o.log(`closing ${c.session.user.id}'s connection: drive input flood`); this.#drop(c, 1008, 'too many messages'); }
+      return;
+    }
+    c.driveTokens -= 1;
+    const relay = this.#o.drive;
+    if (!relay) { this.#refuse(c, ref, 'Driving is not available in this service. Nothing was sent to the truck.'); return; }
+    const out = relay.input({ id: c.id, operatorId: c.session.user.id }, { vehicleId: m.vehicleId, throttle: m.throttle, n: m.n });
+    if (out.relayed && out.code === null) return;
+    if (out.code === 'RATE' || out.code === 'OUT_OF_ORDER') return; // dropped quietly; counted in the drive view
+    if (out.code === 'BAD_INPUT' || out.code === 'BAD_THROTTLE' || out.code === 'UNKNOWN_VEHICLE') { this.#refuse(c, ref, out.reason ?? 'bad drive input'); return; }
+    this.#dirty = true;
+    this.#reply(c, ref, { ok: false, drive: out, error: out.reason });
   }
 
   #actor(s: Session): Actor {

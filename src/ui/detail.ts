@@ -8,6 +8,7 @@ import type { FleetSnapshot, TruckView } from '../fleet.ts';
 import type { CommandRecord } from '../registry.ts';
 import type { TruckNote } from '../trucknotes.ts';
 import { age, dataState, faultWords } from '../words.ts';
+import { PARAMS } from '../params.ts';
 import { socView } from './overview.ts';
 
 // ---- who held a truck (L7.9) ----
@@ -196,7 +197,10 @@ export function buttons(t: TruckView, you: { id: string; role: string } | null, 
   ];
   if (mine) out.push({ action: 'RELEASE_CONTROL', label: 'Release control', primary: true, note: 'Hands it back; it holds until someone resumes it' });
   else if (depleted) out.push({ action: 'TAKE_CONTROL', label: 'Take control', disabled: 'Battery depleted: it needs a tow and cannot be driven' });
-  else if (holder) {
+  else if (holder?.startsWith('system:')) {
+    out.push({ action: 'TAKE_CONTROL', label: 'Take control', disabled: `The system holds it for a blast (${holder}); its control lapses by itself within ${PARAMS.leaseIdleTimeout.value / 1000} s${you?.role === 'supervisor' ? ', or take over now' : '; a supervisor can take over now'}` });
+    if (you?.role === 'supervisor') out.push({ action: 'TAKE_CONTROL', label: `Take over from ${holder}`, force: true, note: 'Takes the controls from the blast rule at once. The zone ahead may be closing: the drive relay refuses driving into it' });
+  } else if (holder) {
     out.push({ action: 'TAKE_CONTROL', label: 'Take control', disabled: `${holder} is driving it. Talk to them${you?.role === 'supervisor' ? ', or take over' : '; a supervisor can take over'}` });
     if (you?.role === 'supervisor') out.push({ action: 'TAKE_CONTROL', label: `Take over from ${holder}`, force: true, note: `Takes the controls from ${holder} at once; they are told who took it` });
   } else out.push({ action: 'TAKE_CONTROL', label: 'Take control', note: 'Stops it at once and waits for drive input; interrupts loading, dumping or charging' });

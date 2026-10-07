@@ -8,6 +8,7 @@
 import type { Clock, TimerHandle } from './clock.ts';
 import { FleetState } from './fleet.ts';
 import { startHttp, type AuthEvent } from './http.ts';
+import { DriveRelay } from './drive.ts';
 import { attachRegistry, GatewayLink, type Dialer } from './link.ts';
 import { BLAST_SAFETY_OFF, LiveHub } from './live.ts';
 import { ALLOW_ALL_GATE_NO_BLAST_SAFETY, CommandRegistry } from './registry.ts';
@@ -36,6 +37,7 @@ export interface Service {
   store: Store;
   sessions: Sessions;
   hub: LiveHub;
+  drive: DriveRelay;
   close(): Promise<void>;
 }
 
@@ -84,17 +86,20 @@ export async function startService(o: ServiceOptions): Promise<Service> {
     }
   };
 
-  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log, store });
+  // Drive input from browsers, relayed only while fresh (CLAUDE.md invariant 3).
+  const drive = new DriveRelay({ clock, fleet, registry, link, log, audit: (e) => store.audit(e) });
+  const hub = new LiveHub({ clock, fleet, link, registry, sessions, log, store, drive });
   hub.start();
   const http = await startHttp({ ...o.http, users: o.users, sessions, throttle: new LoginThrottle(clock), hub, onAuth, log });
   link.start(); // the one gateway connection (L6.4): nothing a browser does opens another
 
   return {
-    url: http.url, port: http.port, origins: http.origins, fleet, link, registry, store, sessions, hub,
+    url: http.url, port: http.port, origins: http.origins, fleet, link, registry, store, sessions, hub, drive,
     close: async () => {
       if (sweep) clock.clearTimeout(sweep);
       await http.close();
       registry.stop();
+      drive.stop();
       link.stop();
       fleet.stop();
       store.close();
